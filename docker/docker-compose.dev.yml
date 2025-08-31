@@ -1,0 +1,49 @@
+# 开发环境Docker Compose配置
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../app:/app/app  # 挂载源代码，支持热重载
+      - ../data:/app/data
+      - ../logs:/app/logs
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - API_KEY=${API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - API_BASE_URL=${API_BASE_URL:-}
+      - EMBEDDING_API_BASE_URL=${EMBEDDING_API_BASE_URL:-}
+      - CHAT_MODEL=${CHAT_MODEL:-gpt-3.5-turbo}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-ada-002}
+      - CHROMA_DB_PATH=/app/data/chroma_db
+      - UPLOAD_DIR=/app/data/uploads
+      - DEBUG=True
+    env_file:
+      - ../.env
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../frontend:/app  # 挂载源代码，支持热重载
+    depends_on:
+      - backend
+    environment:
+      - BACKEND_URL=http://backend:8000
+    restart: unless-stopped
+
+volumes:
+  app_data:
+    driver: local
