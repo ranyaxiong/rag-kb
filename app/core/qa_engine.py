@@ -5,13 +5,14 @@ import logging
 import time
 from typing import Dict, List, Any, Optional
 
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
-from langchain.schema import Document
+from langchain_core.prompts import PromptTemplate
+from langchain_core.documents import Document
 
 from app.core.config import settings
 from app.core.vector_store import VectorStore
+from app.core.cache_manager import cache_manager
 from app.models.schemas import SourceDocument, QuestionResponse
 
 logger = logging.getLogger(__name__)
@@ -40,17 +41,17 @@ class QAEngine:
             
             # 使用ChatOpenAI（支持兼容的API）
             llm_kwargs = {
-                "model_name": model_config["chat_model"],
-                "openai_api_key": api_key,
+                "model": model_config["chat_model"],
+                "api_key": api_key,
                 "temperature": 0.1,
                 "max_tokens": 1000
             }
             
             # 设置自定义API端点（如果指定）
             if model_config["api_base_url"] and model_config["api_base_url"] != "https://api.openai.com/v1":
-                llm_kwargs["openai_api_base"] = model_config["api_base_url"]
+                llm_kwargs["base_url"] = model_config["api_base_url"]
                 # 对于DeepSeek等兼容OpenAI的API，设置组织ID为空
-                llm_kwargs["openai_organization"] = ""
+                llm_kwargs["organization"] = ""
             
             self.llm = ChatOpenAI(**llm_kwargs)
             
@@ -102,7 +103,7 @@ class QAEngine:
             raise
     
     def ask(self, question: str, max_sources: Optional[int] = None) -> QuestionResponse:
-        """回答问题"""
+        """回答问题（带缓存优化）"""
         start_time = time.time()
         
         try:
@@ -112,7 +113,28 @@ class QAEngine:
             # 使用指定的源文档数量或默认值
             k = max_sources or settings.max_sources
             
-            # 执行RAG查询
+            # 首先获取相关文档用于生成上下文hash
+            relevant_docs = self.get_relevant_documents(question, k)
+            context_hash = cache_manager.get_context_hash(relevant_docs)
+            
+            # 获取模型配置用于缓存key
+            model_config = settings.get_model_config()
+            model_name = f"{model_config['provider']}/{model_config['chat_model']}"
+            
+            # 检查QA缓存
+            cached_result = cache_manager.get_qa_cache(question, context_hash, model_name)
+            if cached_result:
+                processing_time = time.time() - start_time
+                logger.info(f"Question answered from cache in {processing_time:.2f}s")
+                
+                return QuestionResponse(
+                    answer=cached_result["answer"],
+                    sources=[SourceDocument(**src) for src in cached_result["sources"]],
+                    processing_time=round(processing_time, 2),
+                    from_cache=True
+                )
+            
+            # 缓存未命中，执行RAG查询
             result = self.qa_chain({
                 "query": question,
                 "retriever": self.vector_store.as_retriever(search_kwargs={"k": k})
@@ -125,13 +147,18 @@ class QAEngine:
             # 处理源文档
             sources = self._process_source_documents(source_docs)
             
+            # 缓存结果
+            sources_dict = [src.dict() for src in sources]
+            cache_manager.set_qa_cache(question, context_hash, answer, sources_dict, model_name)
+            
             # 计算处理时间
             processing_time = time.time() - start_time
             
             response = QuestionResponse(
                 answer=answer,
                 sources=sources,
-                processing_time=round(processing_time, 2)
+                processing_time=round(processing_time, 2),
+                from_cache=False
             )
             
             logger.info(f"Question answered successfully in {processing_time:.2f}s")
@@ -146,7 +173,8 @@ class QAEngine:
             return QuestionResponse(
                 answer=error_msg,
                 sources=[],
-                processing_time=round(processing_time, 2)
+                processing_time=round(processing_time, 2),
+                from_cache=False
             )
     
     def _process_source_documents(self, source_docs: List[Document]) -> List[SourceDocument]:

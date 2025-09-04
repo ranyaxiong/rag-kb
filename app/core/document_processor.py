@@ -7,14 +7,14 @@ from datetime import datetime
 from typing import List, Dict, Any
 import logging
 
-from langchain.document_loaders import (
+from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredWordDocumentLoader, 
     TextLoader,
     UnstructuredMarkdownLoader
 )
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
 from app.core.config import settings
 

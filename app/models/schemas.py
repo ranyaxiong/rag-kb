@@ -55,6 +55,7 @@ class QuestionResponse(BaseModel):
     answer: str
     sources: List[SourceDocument]
     processing_time: float
+    from_cache: Optional[bool] = False
 
 
 class ApiResponse(BaseModel):

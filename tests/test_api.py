@@ -231,7 +231,7 @@ class TestQAAPI:
     @patch('app.api.qa.qa_engine')
     def test_search_documents(self, mock_qa_engine):
         """测试文档检索"""
-        from langchain.schema import Document
+        from langchain_core.documents import Document
         
         # 模拟检索结果
         mock_docs = [

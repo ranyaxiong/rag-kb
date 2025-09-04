@@ -7,11 +7,13 @@ from typing import List, Dict, Any, Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.schema import Document
-from langchain.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+from langchain_community.vectorstores import Chroma
 
 from app.core.config import settings
+from app.core.cache_manager import cache_manager
+from app.core.cached_embeddings import CachedEmbeddings
 
 logger = logging.getLogger(__name__)
 
@@ -62,20 +64,25 @@ class VectorStore:
             
             # 使用OpenAIEmbeddings（支持兼容的API）
             embedding_kwargs = {
-                "openai_api_key": api_key,
+                "api_key": api_key,
                 "model": model_config["embedding_model"]
             }
             
             # 设置嵌入模型的API端点
             embedding_api_url = model_config.get("embedding_api_base_url")
             if embedding_api_url and embedding_api_url != "https://api.openai.com/v1":
-                embedding_kwargs["openai_api_base"] = embedding_api_url
+                embedding_kwargs["base_url"] = embedding_api_url
                 # 对于非OpenAI的API，设置组织ID为空
-                embedding_kwargs["openai_organization"] = ""
+                embedding_kwargs["organization"] = ""
             
-            self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
+            base_embeddings = OpenAIEmbeddings(**embedding_kwargs)
+            # 使用缓存包装器
+            self.embeddings = CachedEmbeddings(
+                base_embeddings=base_embeddings,
+                model_name=f"{model_config['embedding_provider']}/{model_config['embedding_model']}"
+            )
             
-            logger.info(f"Embeddings model initialized successfully: {model_config['embedding_provider']}/{model_config['embedding_model']}")
+            logger.info(f"Cached embeddings model initialized successfully: {model_config['embedding_provider']}/{model_config['embedding_model']}")
             
         except Exception as e:
             logger.error(f"Error initializing embeddings: {str(e)}")

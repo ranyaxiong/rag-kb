@@ -6,7 +6,17 @@
       "Bash(./venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload)",
       "Bash(docker-compose build:*)",
       "Bash(docker-compose up:*)",
-      "Bash(docker-compose:*)"
+      "Bash(docker-compose:*)",
+      "Bash(docker exec:*)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_api.py::TestDocumentAPI::test_upload_unsupported_file -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_api.py::TestHealthAPI -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_api.py::TestQAAPI::test_ask_empty_question -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py::TestDocumentProcessor::test_split_documents -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py::TestDocumentProcessor::test_load_document -v)",
+      "Bash(timeout 60 ./venv/Scripts/python.exe -m pytest:*)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_cached_embeddings.py -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_config.py::TestSettings::test_default_initialization -v)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py -v)"
     ],
     "deny": [],
     "ask": []

@@ -58,6 +58,20 @@ class Settings(BaseSettings):
     max_sources: int = 3
     similarity_threshold: float = 0.7
     
+    # 成本优化配置
+    enable_embedding_cache: bool = True
+    enable_qa_cache: bool = True
+    embedding_cache_ttl_days: int = 7  # 嵌入缓存过期时间（天）
+    qa_cache_ttl_hours: int = 24  # 问答缓存过期时间（小时）
+    
+    # 智能批处理配置
+    embedding_batch_size: int = 100  # 嵌入批处理大小
+    max_context_length: int = 4000   # 最大上下文长度（tokens）
+    
+    # LLM优化配置
+    llm_temperature: float = 0.1     # 降低随机性提高缓存命中
+    llm_max_tokens: int = 800        # 减少生成token数
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

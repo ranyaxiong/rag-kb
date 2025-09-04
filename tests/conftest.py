@@ -23,6 +23,9 @@ def mock_settings():
         mock_settings.chunk_overlap = 200
         mock_settings.max_sources = 3
         mock_settings.similarity_threshold = 0.7
+        mock_settings.app_name = "RAG Knowledge Base"
+        mock_settings.app_version = "1.0.0"
+        mock_settings.debug = False
         yield mock_settings
 
 @pytest.fixture
@@ -42,3 +45,19 @@ def mock_openai_key():
     """自动模拟OpenAI API Key"""
     with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
         yield
+
+@pytest.fixture
+def mock_vector_store():
+    """模拟向量存储fixture"""
+    with patch('app.core.vector_store.VectorStore') as mock_vs:
+        mock_instance = mock_vs.return_value
+        mock_instance.get_collection_info.return_value = {"document_count": 0}
+        mock_instance.list_documents.return_value = []
+        mock_instance.add_documents.return_value = True
+        mock_instance.delete_document_by_id.return_value = True
+        yield mock_instance
+
+@pytest.fixture
+def test_document_content():
+    """测试文档内容fixture"""
+    return "This is a test document with some content for testing purposes. " * 10

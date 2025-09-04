@@ -13,15 +13,6 @@ services:
       - ../data:/app/data
       - ../logs:/app/logs
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - API_KEY=${API_KEY:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
-      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
-      - API_BASE_URL=${API_BASE_URL:-}
-      - EMBEDDING_API_BASE_URL=${EMBEDDING_API_BASE_URL:-}
-      - CHAT_MODEL=${CHAT_MODEL:-gpt-3.5-turbo}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-ada-002}
       - CHROMA_DB_PATH=/app/data/chroma_db
       - UPLOAD_DIR=/app/data/uploads
       - DEBUG=True

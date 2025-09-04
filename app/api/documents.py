@@ -46,11 +46,20 @@ async def upload_document(
         
         # 检查文件大小（限制10MB）
         file_content = await file.read()
-        if len(file_content) > 10 * 1024 * 1024:
+        if len(file_content) > 100 * 1024 * 1024:
             raise HTTPException(
                 status_code=400,
-                detail="File size too large. Maximum size is 10MB."
+                detail="File size too large. Maximum size is 100MB."
             )
+        
+        # 检查是否为重复文件（基于文件名和大小）
+        existing_docs = get_vector_store().list_documents()
+        for doc in existing_docs:
+            if doc['filename'] == file.filename:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+                )
         
         # 保存文件
         file_path = doc_processor.save_uploaded_file(file_content, file.filename)
@@ -210,6 +219,17 @@ async def batch_upload_documents(
                         "filename": file.filename,
                         "success": False,
                         "error": f"Unsupported file type"
+                    })
+                    continue
+                
+                # 检查是否为重复文件
+                existing_docs = get_vector_store().list_documents()
+                file_exists = any(doc['filename'] == file.filename for doc in existing_docs)
+                if file_exists:
+                    results.append({
+                        "filename": file.filename,
+                        "success": False,
+                        "error": f"Document already exists"
                     })
                     continue
                 

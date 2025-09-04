@@ -12,6 +12,10 @@ class FileUploadComponent:
     def __init__(self, backend_url: str):
         self.backend_url = backend_url
         self.supported_formats = [".pdf", ".docx", ".doc", ".txt", ".md"]
+        
+        # 初始化上传状态
+        if "uploading" not in st.session_state:
+            st.session_state.uploading = False
     
     def render(self):
         """渲染文件上传界面"""
@@ -37,7 +41,8 @@ class FileUploadComponent:
             st.write(f"**文件大小:** {uploaded_file.size / 1024:.2f} KB")
             
             # 上传按钮
-            if st.button("📤 上传文件"):
+            upload_disabled = st.session_state.uploading
+            if st.button("📤 上传文件", disabled=upload_disabled):
                 self._upload_single_file(uploaded_file)
         
         st.markdown("---")
@@ -56,12 +61,16 @@ class FileUploadComponent:
             for file in uploaded_files:
                 st.write(f"• {file.name}")
             
-            if st.button("📤 批量上传"):
+            upload_disabled = st.session_state.uploading
+            if st.button("📤 批量上传", disabled=upload_disabled):
                 self._upload_multiple_files(uploaded_files)
     
     def _upload_single_file(self, uploaded_file):
         """上传单个文件"""
         try:
+            # 设置上传状态
+            st.session_state.uploading = True
+            
             with st.spinner(f"正在上传 {uploaded_file.name}..."):
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                 
@@ -80,7 +89,10 @@ class FileUploadComponent:
                     doc_info = result.get("document", {})
                     if doc_info:
                         st.json(doc_info)
-                        
+                elif response.status_code == 409:
+                    # 处理重复文件错误
+                    error_detail = response.json().get("detail", "文件已存在")
+                    st.warning(f"⚠️ {error_detail}")
                 else:
                     error_detail = response.json().get("detail", "未知错误")
                     st.error(f"❌ 上传失败: {error_detail}")
@@ -89,10 +101,16 @@ class FileUploadComponent:
             st.error("❌ 上传超时，请检查网络连接或稍后重试")
         except Exception as e:
             st.error(f"❌ 上传出错: {str(e)}")
+        finally:
+            # 重置上传状态
+            st.session_state.uploading = False
     
     def _upload_multiple_files(self, uploaded_files: List):
         """批量上传文件"""
         try:
+            # 设置上传状态
+            st.session_state.uploading = True
+            
             with st.spinner(f"正在批量上传 {len(uploaded_files)} 个文件..."):
                 
                 # 准备文件数据
@@ -120,7 +138,10 @@ class FileUploadComponent:
                             st.success(f"✅ {filename}: 上传成功")
                         else:
                             error = file_result.get("error", "未知错误")
-                            st.error(f"❌ {filename}: {error}")
+                            if "already exists" in error.lower():
+                                st.warning(f"⚠️ {filename}: 文件已存在")
+                            else:
+                                st.error(f"❌ {filename}: {error}")
                     
                     st.info("所有文件正在后台处理中...")
                     
@@ -132,6 +153,9 @@ class FileUploadComponent:
             st.error("❌ 批量上传超时，请检查网络连接或稍后重试")
         except Exception as e:
             st.error(f"❌ 批量上传出错: {str(e)}")
+        finally:
+            # 重置上传状态
+            st.session_state.uploading = False
     
     def get_upload_status(self):
         """获取上传状态（预留功能）"""
