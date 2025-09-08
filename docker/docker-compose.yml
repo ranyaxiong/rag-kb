@@ -11,10 +11,20 @@ services:
       - ../data:/app/data
       - ../logs:/app/logs
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # API密钥配置
+      - API_KEY=${API_KEY:-${OPENAI_API_KEY}}
+      
+      # 存储配置
       - CHROMA_DB_PATH=/app/data/chroma_db
       - UPLOAD_DIR=/app/data/uploads
+      
+      # 安全配置
       - DEBUG=False
+      
+      # CORS配置（生产环境需要指定具体域名）
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8501}
+      - ALLOWED_METHODS=${ALLOWED_METHODS:-GET,POST,DELETE}
+      - ALLOWED_HEADERS=${ALLOWED_HEADERS:-Content-Type,Authorization}
     env_file:
       - ../.env
     restart: unless-stopped

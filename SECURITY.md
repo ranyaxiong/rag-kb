@@ -182,16 +182,60 @@ docker secret ls
 docker exec <container-name> ls -la /run/secrets/
 ```
 
+## 🌐 CORS安全配置
+
+### 快速配置CORS
+```bash
+# 交互式配置CORS设置
+python scripts/setup-cors.py
+
+# 查看当前CORS配置
+python scripts/setup-cors.py show
+```
+
+### 手动配置CORS
+编辑 `.env` 文件或设置环境变量：
+
+```bash
+# 开发环境
+ALLOWED_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
+
+# 生产环境 - 替换为你的域名
+ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+
+# HTTP方法限制
+ALLOWED_METHODS=GET,POST,DELETE
+
+# 请求头限制
+ALLOWED_HEADERS=Content-Type,Authorization
+```
+
+### 部署环境配置
+
+**本地开发:**
+```bash
+cp .env.template .env
+# 编辑 .env 文件配置API密钥
+```
+
+**生产部署:**
+```bash
+cp .env.production .env
+# 编辑 ALLOWED_ORIGINS 为你的域名
+# 确保 DEBUG=False
+```
+
 ## 📚 最佳实践
 
 1. **永远不要在代码中硬编码密钥**
 2. **使用最小权限原则**
 3. **定期轮换API密钥**
-4. **监控API使用情况**
-5. **启用访问日志**
-6. **建立密钥管理流程**
-7. **定期安全审计**
-8. **团队安全培训**
+4. **严格配置CORS域名白名单**
+5. **监控API使用情况**
+6. **启用访问日志**
+7. **建立密钥管理流程**
+8. **定期安全审计**
+9. **团队安全培训**
 
 ## 🔗 相关链接
 

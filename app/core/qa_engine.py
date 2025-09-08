@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 class QAEngine:
     """RAG问答引擎"""
     
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, overrides: Optional[dict] = None):
         self.vector_store = vector_store
         self.llm = None
         self.qa_chain = None
+        # 允许按请求覆盖：{"api_key": str, "provider": str, "api_base_url": str, "model": str}
+        self._overrides = overrides or {}
+        self._effective_model_config = None  # 记录生效的模型配置用于缓存等
         
         self._initialize_llm()
         self._build_qa_chain()
@@ -32,12 +35,22 @@ class QAEngine:
     def _initialize_llm(self):
         """初始化大语言模型"""
         try:
-            api_key = settings.get_api_key()
+            overrides = self._overrides or {}
+            # 1) API Key 优先使用请求覆盖，否则使用全局配置
+            api_key = overrides.get("api_key") or settings.get_api_key()
             if not api_key:
                 raise ValueError(f"API key not configured for {settings.llm_provider}")
             
-            # 获取模型配置
+            # 2) 获取模型配置并应用覆盖项（不修改全局 settings）
             model_config = settings.get_model_config()
+            if overrides.get("provider"):
+                model_config["provider"] = overrides["provider"]
+            if overrides.get("api_base_url"):
+                model_config["api_base_url"] = overrides["api_base_url"]
+            if overrides.get("model"):
+                model_config["chat_model"] = overrides["model"]
+            # 记录生效配置
+            self._effective_model_config = dict(model_config)
             
             # 使用ChatOpenAI（支持兼容的API）
             llm_kwargs = {
@@ -117,9 +130,9 @@ class QAEngine:
             relevant_docs = self.get_relevant_documents(question, k)
             context_hash = cache_manager.get_context_hash(relevant_docs)
             
-            # 获取模型配置用于缓存key
-            model_config = settings.get_model_config()
-            model_name = f"{model_config['provider']}/{model_config['chat_model']}"
+            # 获取模型配置用于缓存key（使用生效的配置，避免与默认配置混淆）
+            model_cfg = self._effective_model_config or settings.get_model_config()
+            model_name = f"{model_cfg['provider']}/{model_cfg['chat_model']}"
             
             # 检查QA缓存
             cached_result = cache_manager.get_qa_cache(question, context_hash, model_name)

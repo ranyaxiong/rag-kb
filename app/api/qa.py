@@ -1,15 +1,49 @@
+def _extract_overrides_from_headers(request) -> dict:
+    """从请求头提取按请求覆盖配置（BYOK）
+    支持的请求头：
+    - Authorization: "Bearer <API_KEY>" 或直接含 key
+    - X-LLM-Provider: openai/deepseek/zhipu/openrouter/custom
+    - X-LLM-Base-URL: 自定义兼容 OpenAI 的 API Base URL
+    - X-LLM-Model: 聊天模型名称
+    """
+    overrides = {}
+    try:
+        # API Key
+        auth = request.headers.get("Authorization") or request.headers.get("X-API-Key")
+        if auth:
+            token = auth.strip()
+            if token.lower().startswith("bearer "):
+                token = token.split(" ", 1)[1].strip()
+            if token:
+                overrides["api_key"] = token
+        # 其他覆盖项
+        provider = request.headers.get("X-LLM-Provider")
+        base_url = request.headers.get("X-LLM-Base-URL")
+        model = request.headers.get("X-LLM-Model")
+        if provider:
+            overrides["provider"] = provider
+        if base_url:
+            overrides["api_base_url"] = base_url
+        if model:
+            overrides["model"] = model
+    except Exception:
+        # 安全兜底：出现异常则返回当前累积的 overrides
+        pass
+    return overrides
+
 """
 问答API
 """
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.vector_store import VectorStore
 from app.core.qa_engine import QAEngine
-from app.models.schemas import QuestionRequest, QuestionResponse
+from app.models.schemas import QuestionRequest, QuestionResponse, SourceDocument
+from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +69,10 @@ def get_qa_engine():
 
 
 @router.post("/ask", response_model=QuestionResponse)
-async def ask_question(request: QuestionRequest):
+async def ask_question(payload: QuestionRequest, request: Request):
     """智能问答接口"""
     try:
-        if not request.question.strip():
+        if not payload.question.strip():
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
         # 检查是否有文档数据
@@ -50,10 +84,52 @@ async def ask_question(request: QuestionRequest):
                 processing_time=0.0
             )
         
+        # 提取BYOK覆盖，并按需选择引擎
+        overrides = _extract_overrides_from_headers(request)
+        engine = None
+        from app.core.config import settings
+        if overrides.get("api_key"):
+            # 用户提供了 Key，创建临时引擎（不影响全局实例与测试桩）
+            engine = QAEngine(get_vector_store(), overrides=overrides)
+        else:
+            # 未提供 Key：若全局尚未初始化且也无默认 Key，则走 Demo 回退；
+            # 若测试中已用 mock 注入了 qa_engine，则直接复用以保持单测稳定。
+            if qa_engine is None and not settings.get_api_key():
+                try:
+                    k = payload.max_sources or settings.max_sources
+                    docs = get_vector_store().similarity_search(payload.question, k=k)
+                    sources = []
+                    for doc in docs:
+                        content = doc.page_content
+                        if len(content) > 300:
+                            content = content[:300] + "..."
+                        sources.append(SourceDocument(
+                            document_name=doc.metadata.get("filename", "Unknown"),
+                            content=content,
+                            similarity_score=1.0,
+                            page_number=doc.metadata.get("page")
+                        ))
+                    return QuestionResponse(
+                        answer=(
+                            "当前处于 Demo 模式，尚未提供 LLM API Key，因此仅展示检索到的相关内容片段。\n"
+                            "请在左侧“模型设置(BYOK)”中填写 API Key 后重试，以生成完整答案。"
+                        ),
+                        sources=sources,
+                        processing_time=0.0
+                    )
+                except Exception as demo_e:
+                    return QuestionResponse(
+                        answer=f"当前处于 Demo 模式且未配置 API Key。无法进行生成，仅提示：{str(demo_e)}",
+                        sources=[],
+                        processing_time=0.0
+                    )
+            # 使用默认全局引擎（便于单元测试使用 mock）
+            engine = get_qa_engine()
+        
         # 执行问答
-        response = get_qa_engine().ask(
-            question=request.question,
-            max_sources=request.max_sources
+        response = engine.ask(
+            question=payload.question,
+            max_sources=payload.max_sources
         )
         
         return response
@@ -65,17 +141,59 @@ async def ask_question(request: QuestionRequest):
         raise HTTPException(status_code=500, detail=f"Question processing failed: {str(e)}")
 
 
+@router.get("/verify-key")
+async def verify_key(request: Request):
+    """验证 LLM API Key 是否有效（仅做一次最小化调用）"""
+    try:
+        overrides = _extract_overrides_from_headers(request)
+        from app.core.config import settings
+        api_key = overrides.get("api_key") or settings.get_api_key()
+        if not api_key:
+            raise HTTPException(status_code=400, detail="No API key provided. 请在请求头或服务端配置中提供 API Key")
+        # 构造模型配置
+        model_cfg = settings.get_model_config()
+        if overrides.get("provider"):
+            model_cfg["provider"] = overrides["provider"]
+        if overrides.get("api_base_url"):
+            model_cfg["api_base_url"] = overrides["api_base_url"]
+        # 模型名可选覆盖
+        if overrides.get("model"):
+            model_cfg["chat_model"] = overrides["model"]
+        # 构建 LLM 客户端并做一次轻量调用
+        llm_kwargs = {
+            "model": model_cfg["chat_model"],
+            "api_key": api_key,
+            "temperature": 0.0,
+            "max_tokens": 4,
+        }
+        if model_cfg.get("api_base_url") and model_cfg["api_base_url"] != "https://api.openai.com/v1":
+            llm_kwargs["base_url"] = model_cfg["api_base_url"]
+            llm_kwargs["organization"] = ""
+        llm = ChatOpenAI(**llm_kwargs)
+        _ = llm.predict("ping")
+        return {"success": True, "provider": model_cfg["provider"], "model": model_cfg["chat_model"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Verify key failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Verify key failed: {str(e)}")
+
+
 @router.post("/search")
-async def search_documents(request: QuestionRequest):
+async def search_documents(payload: QuestionRequest, request: Request):
     """文档检索接口（不生成答案）"""
     try:
-        if not request.question.strip():
+        if not payload.question.strip():
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         
+        # 选择引擎（当提供 BYOK 时使用临时引擎，否则使用全局，以保持与测试兼容）
+        overrides = _extract_overrides_from_headers(request)
+        engine = get_qa_engine() if not overrides.get("api_key") else QAEngine(get_vector_store(), overrides=overrides)
+        
         # 执行相似度搜索
-        relevant_docs = get_qa_engine().get_relevant_documents(
-            question=request.question,
-            k=request.max_sources or 5
+        relevant_docs = engine.get_relevant_documents(
+            question=payload.question,
+            k=payload.max_sources or 5
         )
         
         # 处理结果
@@ -94,7 +212,7 @@ async def search_documents(request: QuestionRequest):
         
         return {
             "success": True,
-            "query": request.question,
+            "query": payload.question,
             "results": results,
             "total_found": len(results)
         }

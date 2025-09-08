@@ -136,6 +136,7 @@ class ChatInterface:
                             "question": question,
                             "max_sources": max_sources
                         },
+                        headers=self._build_byok_headers(),
                         timeout=30
                     )
                     
@@ -249,6 +250,26 @@ class ChatInterface:
             )
         except Exception as e:
             st.error(f"反馈提交失败: {str(e)}")
+    
+    def _build_byok_headers(self) -> dict:
+        """根据侧边栏保存的 BYOK 设置构建请求头（仅保存在本地会话）"""
+        headers = {}
+        try:
+            api_key = getattr(st.session_state, 'byok_api_key', '').strip()
+            provider = getattr(st.session_state, 'byok_provider', '').strip()
+            base_url = getattr(st.session_state, 'byok_base_url', '').strip()
+            model = getattr(st.session_state, 'byok_model', '').strip()
+            if api_key:
+                headers['Authorization'] = f"Bearer {api_key}"
+            if provider:
+                headers['X-LLM-Provider'] = provider
+            if base_url:
+                headers['X-LLM-Base-URL'] = base_url
+            if model:
+                headers['X-LLM-Model'] = model
+        except Exception:
+            pass
+        return headers
     
     def get_chat_history(self):
         """获取聊天历史"""

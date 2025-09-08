@@ -46,10 +46,10 @@ async def upload_document(
         
         # 检查文件大小（限制10MB）
         file_content = await file.read()
-        if len(file_content) > 100 * 1024 * 1024:
+        if len(file_content) > 10 * 1024 * 1024:
             raise HTTPException(
                 status_code=400,
-                detail="File size too large. Maximum size is 100MB."
+                detail="File size too large. Maximum size is 10MB."
             )
         
         # 检查是否为重复文件（基于文件名和大小）

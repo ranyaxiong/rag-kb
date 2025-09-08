@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     frontend_host: str = "0.0.0.0"
     frontend_port: int = 8501
     
+    # CORS配置
+    allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"  # 允许的前端域名，逗号分隔
+    allowed_methods: str = "GET,POST,DELETE"  # 允许的HTTP方法
+    allowed_headers: str = "Content-Type,Authorization,X-API-Key,X-LLM-Provider,X-LLM-Base-URL,X-LLM-Model"  # 允许的请求头（含BYOK）
+    
     # RAG配置
     chunk_size: int = 1000
     chunk_overlap: int = 200
@@ -208,6 +213,24 @@ class Settings(BaseSettings):
                 config["embedding_api_base_url"] = "https://api.openai.com/v1"
         
         return config
+    
+    def get_cors_origins(self) -> list:
+        """获取CORS允许的源域名列表"""
+        if self.allowed_origins == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+    
+    def get_cors_methods(self) -> list:
+        """获取CORS允许的HTTP方法列表"""
+        if self.allowed_methods == "*":
+            return ["*"]
+        return [method.strip() for method in self.allowed_methods.split(",") if method.strip()]
+    
+    def get_cors_headers(self) -> list:
+        """获取CORS允许的请求头列表"""
+        if self.allowed_headers == "*":
+            return ["*"]
+        return [header.strip() for header in self.allowed_headers.split(",") if header.strip()]
 
 
 # 全局配置实例

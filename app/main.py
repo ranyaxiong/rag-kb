@@ -52,10 +52,10 @@ app = FastAPI(
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_origins=settings.get_cors_origins(),  # 从配置中获取允许的域名
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=settings.get_cors_methods(),  # 限制HTTP方法
+    allow_headers=settings.get_cors_headers(),  # 限制请求头
 )
 
 # 注册路由
