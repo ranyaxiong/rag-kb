@@ -309,6 +309,7 @@ async def qa_health_check():
 async def get_qa_stats():
     """获取问答系统统计信息"""
     try:
+        from app.core.config import settings
         collection_info = get_vector_store().get_collection_info()
         
         stats = {
@@ -318,9 +319,9 @@ async def get_qa_stats():
                 "embedding_model": collection_info.get("embedding_model")
             },
             "qa_settings": {
-                "max_sources": qa_engine.vector_store.similarity_threshold,
-                "similarity_threshold": vector_store.similarity_threshold,
-                "model": "gpt-3.5-turbo"
+                "max_sources": settings.max_sources,
+                "similarity_threshold": settings.similarity_threshold,
+                "model": settings.chat_model
             }
         }
         

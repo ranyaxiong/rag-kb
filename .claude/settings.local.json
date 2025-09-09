@@ -17,7 +17,8 @@
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_cached_embeddings.py -v)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_config.py::TestSettings::test_default_initialization -v)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py -v)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(docker logs:*)"
     ],
     "deny": [],
     "ask": []
