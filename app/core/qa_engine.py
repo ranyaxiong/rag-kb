@@ -115,7 +115,7 @@ class QAEngine:
             logger.error(f"Error building QA chain: {str(e)}")
             raise
     
-    def ask(self, question: str, max_sources: Optional[int] = None) -> QuestionResponse:
+    def ask(self, question: str, max_sources: Optional[int] = None, document_id: Optional[str] = None) -> QuestionResponse:
         """回答问题（带缓存优化）"""
         start_time = time.time()
         
@@ -127,7 +127,7 @@ class QAEngine:
             k = max_sources or settings.max_sources
             
             # 首先获取相关文档用于生成上下文hash
-            relevant_docs = self.get_relevant_documents(question, k)
+            relevant_docs = self.get_relevant_documents(question, k, document_id)
             context_hash = cache_manager.get_context_hash(relevant_docs)
             
             # 获取模型配置用于缓存key（使用生效的配置，避免与默认配置混淆）
@@ -148,10 +148,17 @@ class QAEngine:
                 )
             
             # 缓存未命中，执行RAG查询
-            result = self.qa_chain({
-                "query": question,
-                "retriever": self.vector_store.as_retriever(search_kwargs={"k": k})
-            })
+            # 如果需要文档过滤，创建带过滤的检索器
+            if document_id:
+                search_kwargs = {"k": k, "filter": {"document_id": document_id}}
+                retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
+                result = self.qa_chain({
+                    "query": question,
+                    "retriever": retriever
+                })
+            else:
+                # 使用默认的QA链
+                result = self.qa_chain({"query": question})
             
             # 处理答案
             answer = result.get("result", "抱歉，我无法找到相关信息来回答这个问题。")
@@ -223,15 +230,23 @@ class QAEngine:
     def get_relevant_documents(
         self, 
         question: str, 
-        k: int = None
+        k: int = None,
+        document_id: str = None
     ) -> List[Document]:
         """获取相关文档（不生成答案）"""
         try:
             k = k or settings.max_sources
             
+            # 构建过滤条件
+            filter_dict = None
+            if document_id:
+                filter_dict = {"document_id": document_id}
+                logger.info(f"Filtering documents by document_id: {document_id}")
+            
             relevant_docs = self.vector_store.similarity_search(
                 query=question,
-                k=k
+                k=k,
+                filter_dict=filter_dict
             )
             
             logger.info(f"Retrieved {len(relevant_docs)} relevant documents")

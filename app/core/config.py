@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 200
     max_sources: int = 3
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 1.5  # ChromaDB距离分数,值越小越相似,1.5以下通常为相关
     
     # 成本优化配置
     enable_embedding_cache: bool = True

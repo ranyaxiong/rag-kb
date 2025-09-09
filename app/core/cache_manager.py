@@ -185,11 +185,23 @@ class CacheManager:
         logger.info(f"QA result cached for question hash: {question_hash[:8]}")
     
     def get_context_hash(self, documents: List[Any]) -> str:
-        """生成上下文文档的哈希"""
+        """生成上下文文档的哈希（包含文档身份信息）"""
         content_texts = []
         for doc in documents:
             if hasattr(doc, 'page_content'):
-                content_texts.append(doc.page_content[:200])  # 只取前200字符
+                # 包含文档内容和元数据信息确保唯一性
+                content_part = doc.page_content[:200]  # 只取前200字符
+                
+                # 添加文档身份信息到哈希中
+                doc_id = ""
+                filename = ""
+                if hasattr(doc, 'metadata') and doc.metadata:
+                    doc_id = doc.metadata.get('document_id', '')
+                    filename = doc.metadata.get('filename', '')
+                
+                # 组合内容和身份信息
+                combined_content = f"{content_part}|{doc_id}|{filename}"
+                content_texts.append(combined_content)
             elif isinstance(doc, str):
                 content_texts.append(doc[:200])
         
@@ -216,6 +228,32 @@ class CacheManager:
             conn.commit()
         
         logger.info("Expired cache entries cleaned up")
+    
+    def clear_all_cache(self):
+        """清空所有缓存"""
+        with sqlite3.connect(self.cache_db_path) as conn:
+            # 清空嵌入缓存
+            embedding_count = conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()[0]
+            conn.execute("DELETE FROM embedding_cache")
+            
+            # 清空问答缓存
+            qa_count = conn.execute("SELECT COUNT(*) FROM qa_cache").fetchone()[0]
+            conn.execute("DELETE FROM qa_cache")
+            
+            conn.commit()
+        
+        logger.info(f"All cache cleared: {embedding_count} embedding entries, {qa_count} QA entries")
+        return {"embedding_cleared": embedding_count, "qa_cleared": qa_count}
+    
+    def clear_qa_cache(self):
+        """仅清空问答缓存"""
+        with sqlite3.connect(self.cache_db_path) as conn:
+            qa_count = conn.execute("SELECT COUNT(*) FROM qa_cache").fetchone()[0]
+            conn.execute("DELETE FROM qa_cache")
+            conn.commit()
+        
+        logger.info(f"QA cache cleared: {qa_count} entries")
+        return {"qa_cleared": qa_count}
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """获取缓存统计信息"""

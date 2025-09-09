@@ -200,10 +200,11 @@ class VectorStore:
                 filter=filter_dict
             )
             
-            # 过滤低于阈值的结果
+            # ChromaDB返回的是距离(distance)，值越小表示越相似
+            # 因此应该过滤距离大于阈值的结果（保留相似的，去掉不相似的）
             filtered_results = [
                 (doc, score) for doc, score in results 
-                if score >= settings.similarity_threshold
+                if score <= settings.similarity_threshold
             ]
             
             logger.info(f"Found {len(filtered_results)} relevant documents (threshold: {settings.similarity_threshold})")

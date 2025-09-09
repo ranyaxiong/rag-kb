@@ -97,7 +97,12 @@ async def ask_question(payload: QuestionRequest, request: Request):
             if qa_engine is None and not settings.get_api_key():
                 try:
                     k = payload.max_sources or settings.max_sources
-                    docs = get_vector_store().similarity_search(payload.question, k=k)
+                    filter_dict = {"document_id": payload.document_id} if payload.document_id else None
+                    docs = get_vector_store().similarity_search(
+                        query=payload.question, 
+                        k=k, 
+                        filter_dict=filter_dict
+                    )
                     sources = []
                     for doc in docs:
                         content = doc.page_content
@@ -129,7 +134,8 @@ async def ask_question(payload: QuestionRequest, request: Request):
         # 执行问答
         response = engine.ask(
             question=payload.question,
-            max_sources=payload.max_sources
+            max_sources=payload.max_sources,
+            document_id=payload.document_id
         )
         
         return response
@@ -193,7 +199,8 @@ async def search_documents(payload: QuestionRequest, request: Request):
         # 执行相似度搜索
         relevant_docs = engine.get_relevant_documents(
             question=payload.question,
-            k=payload.max_sources or 5
+            k=payload.max_sources or 5,
+            document_id=payload.document_id
         )
         
         # 处理结果
@@ -310,7 +317,10 @@ async def get_qa_stats():
     """获取问答系统统计信息"""
     try:
         from app.core.config import settings
+        from app.core.cache_manager import cache_manager
+        
         collection_info = get_vector_store().get_collection_info()
+        cache_stats = cache_manager.get_cache_stats()
         
         stats = {
             "vector_store": {
@@ -322,7 +332,8 @@ async def get_qa_stats():
                 "max_sources": settings.max_sources,
                 "similarity_threshold": settings.similarity_threshold,
                 "model": settings.chat_model
-            }
+            },
+            "cache": cache_stats
         }
         
         return stats
@@ -330,3 +341,39 @@ async def get_qa_stats():
     except Exception as e:
         logger.error(f"Error getting QA stats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+@router.delete("/cache")
+async def clear_cache():
+    """清空问答缓存"""
+    try:
+        from app.core.cache_manager import cache_manager
+        result = cache_manager.clear_qa_cache()
+        
+        return {
+            "success": True,
+            "message": "QA cache cleared successfully",
+            "cleared_entries": result["qa_cleared"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+
+
+@router.delete("/cache/all")
+async def clear_all_cache():
+    """清空所有缓存"""
+    try:
+        from app.core.cache_manager import cache_manager
+        result = cache_manager.clear_all_cache()
+        
+        return {
+            "success": True,
+            "message": "All cache cleared successfully",
+            "cleared_entries": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing all cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear all cache: {str(e)}")
