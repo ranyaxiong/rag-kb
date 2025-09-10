@@ -20,6 +20,9 @@ class ChatInterface:
         # 检索范围：None 表示全库
         if "selected_doc_id" not in st.session_state:
             st.session_state.selected_doc_id = None
+        # 清空对话时是否重置检索范围（可配置）
+        if "reset_scope_on_clear" not in st.session_state:
+            st.session_state.reset_scope_on_clear = True
     
     def render(self):
         """渲染聊天界面"""
@@ -36,6 +39,9 @@ class ChatInterface:
         # 清空对话按钮
         if st.session_state.messages and st.button("🗑️ 清空对话"):
             st.session_state.messages = []
+            # 根据设置可选地重置检索范围
+            if st.session_state.get("reset_scope_on_clear", True):
+                st.session_state.selected_doc_id = None
             st.rerun()
     
     def _render_chat_history(self):
@@ -134,6 +140,13 @@ class ChatInterface:
                 help="控制回答时参考的文档数量"
             )
             st.session_state.max_sources = max_sources
+            # 可配置：清空对话时重置检索范围
+            reset_scope = st.checkbox(
+                "清空对话时重置检索范围",
+                value=getattr(st.session_state, "reset_scope_on_clear", True),
+                help="开启后，点击“清空对话”将同时恢复为“全库（默认）”。"
+            )
+            st.session_state.reset_scope_on_clear = reset_scope
     
     def _process_question(self, question: str):
         """处理用户问题"""

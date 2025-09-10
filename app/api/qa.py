@@ -103,6 +103,19 @@ async def ask_question(payload: QuestionRequest, request: Request):
                         k=k, 
                         filter_dict=filter_dict
                     )
+                    fallback_note = ""
+                    # 若限定文档无命中则回退到全库
+                    if payload.document_id and len(docs) == 0:
+                        logger.info(f"Demo mode: no hits for document_id={payload.document_id}, fallback to global search")
+                        docs = get_vector_store().similarity_search(
+                            query=payload.question,
+                            k=k,
+                            filter_dict=None
+                        )
+                        if len(docs) > 0:
+                            fallback_note = "提示：在您选定的文档中未检索到相关内容，已自动在全库中扩大检索范围。\n\n"
+                        else:
+                            fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。\n\n"
                     sources = []
                     for doc in docs:
                         content = doc.page_content
@@ -116,6 +129,7 @@ async def ask_question(payload: QuestionRequest, request: Request):
                         ))
                     return QuestionResponse(
                         answer=(
+                            f"{fallback_note}" +
                             "当前处于 Demo 模式，尚未提供 LLM API Key，因此仅展示检索到的相关内容片段。\n"
                             "请在左侧“模型设置(BYOK)”中填写 API Key 后重试，以生成完整答案。"
                         ),

@@ -130,8 +130,20 @@ class QAEngine:
             # 使用指定的源文档数量或默认值
             k = max_sources or settings.max_sources
             
-            # 首先获取相关文档用于生成上下文hash
+            # 首先获取相关文档用于生成上下文hash；若限定文档无命中则回退到全库
             relevant_docs = self.get_relevant_documents(question, k, document_id)
+            used_document_id = document_id
+            fallback_note = ""
+            if document_id and len(relevant_docs) == 0:
+                # 回退到全库检索
+                logger.info(f"No hits under document_id={document_id}, fallback to global search")
+                relevant_docs = self.get_relevant_documents(question, k, None)
+                used_document_id = None
+                if len(relevant_docs) > 0:
+                    fallback_note = "提示：在您选定的文档中未检索到相关内容，已自动在全库中扩大检索范围。"
+                else:
+                    fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。"
+            # 基于最终采用的上下文计算hash
             context_hash = cache_manager.get_context_hash(relevant_docs)
             
             # 获取模型配置用于缓存key（使用生效的配置，避免与默认配置混淆）
@@ -153,8 +165,8 @@ class QAEngine:
             
             # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
             search_kwargs = {"k": k}
-            if document_id:
-                search_kwargs["filter"] = {"document_id": document_id}
+            if used_document_id:
+                search_kwargs["filter"] = {"document_id": used_document_id}
             retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
             logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
             qa_chain = self._build_qa_chain(retriever=retriever)
@@ -162,14 +174,16 @@ class QAEngine:
             
             # 处理答案
             answer = result.get("result", "抱歉，我无法找到相关信息来回答这个问题。")
+            if fallback_note:
+                answer = f"{fallback_note}\n\n" + answer
             source_docs = result.get("source_documents", [])
             # 防御性过滤：若指定了 document_id，确保来源文档仅来自该文档
-            if document_id:
+            if used_document_id:
                 before = len(source_docs)
-                source_docs = [d for d in source_docs if d.metadata.get("document_id") == document_id]
+                source_docs = [d for d in source_docs if d.metadata.get("document_id") == used_document_id]
                 after = len(source_docs)
                 if after < before:
-                    logger.info(f"Filtered source documents by document_id={document_id}: {before} -> {after}")
+                    logger.info(f"Filtered source documents by document_id={used_document_id}: {before} -> {after}")
             
             # 处理源文档
             sources = self._process_source_documents(source_docs)
