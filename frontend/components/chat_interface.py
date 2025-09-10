@@ -17,6 +17,9 @@ class ChatInterface:
             st.session_state.messages = []
         if "is_processing" not in st.session_state:
             st.session_state.is_processing = False
+        # 检索范围：None 表示全库
+        if "selected_doc_id" not in st.session_state:
+            st.session_state.selected_doc_id = None
     
     def render(self):
         """渲染聊天界面"""
@@ -87,6 +90,31 @@ class ChatInterface:
     def _render_input_area(self):
         """渲染输入区域"""
         
+        # 检索范围选择（限定到指定文档可避免跨文档混入）
+        with st.expander("🔎 检索范围", expanded=False):
+            try:
+                resp = requests.get(f"{self.backend_url}/api/documents/")
+                options = ["全库（默认）"]
+                docs = []
+                if resp.status_code == 200:
+                    docs = resp.json() or []
+                    options += [f"{d['filename']} ({d['id'][:8]})" for d in docs]
+                idx = 0
+                if st.session_state.selected_doc_id:
+                    for i, d in enumerate(docs, start=1):
+                        if d.get('id') == st.session_state.selected_doc_id:
+                            idx = i
+                            break
+                choice = st.selectbox("限定检索范围到指定文档", options=options, index=idx, help="选择文档后，检索与生成仅基于该文档；选择全库则跨文档检索")
+                if choice == "全库（默认）":
+                    st.session_state.selected_doc_id = None
+                else:
+                    sel_index = options.index(choice) - 1
+                    if 0 <= sel_index < len(docs):
+                        st.session_state.selected_doc_id = docs[sel_index].get('id')
+            except Exception:
+                pass
+
         # 问题输入
         user_question = st.chat_input(
             "请输入您的问题...",
@@ -132,10 +160,16 @@ class ChatInterface:
                     
                     response = requests.post(
                         f"{self.backend_url}/api/qa/ask",
-                        json={
-                            "question": question,
-                            "max_sources": max_sources
-                        },
+                        json=(
+                            (lambda payload: (
+                                payload.update({"document_id": st.session_state.selected_doc_id})
+                                if st.session_state.get("selected_doc_id") else None,
+                                payload
+                            ))({
+                                "question": question,
+                                "max_sources": max_sources
+                            })[1]
+                        ),
                         headers=self._build_byok_headers(),
                         timeout=30
                     )

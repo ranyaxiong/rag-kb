@@ -74,7 +74,7 @@ class QAEngine:
             logger.error(f"Error initializing LLM: {str(e)}")
             raise
     
-    def _build_qa_chain(self):
+    def _build_qa_chain(self, retriever=None):
         """构建问答链"""
         try:
             # 自定义提示模板
@@ -98,18 +98,22 @@ class QAEngine:
                 input_variables=["context", "question"]
             )
             
-            # 构建检索问答链
-            self.qa_chain = RetrievalQA.from_chain_type(
+            # 构建检索问答链（支持传入按请求定制的 retriever）
+            effective_retriever = retriever or self.vector_store.as_retriever(
+                search_kwargs={"k": settings.max_sources}
+            )
+            qa_chain = RetrievalQA.from_chain_type(
                 llm=self.llm,
                 chain_type="stuff",
-                retriever=self.vector_store.as_retriever(
-                    search_kwargs={"k": settings.max_sources}
-                ),
+                retriever=effective_retriever,
                 return_source_documents=True,
                 chain_type_kwargs={"prompt": PROMPT}
             )
-            
+            # 仅当未传入自定义 retriever 时，保留为默认链
+            if retriever is None:
+                self.qa_chain = qa_chain
             logger.info("QA chain built successfully")
+            return qa_chain
             
         except Exception as e:
             logger.error(f"Error building QA chain: {str(e)}")
@@ -147,22 +151,25 @@ class QAEngine:
                     from_cache=True
                 )
             
-            # 缓存未命中，执行RAG查询
-            # 如果需要文档过滤，创建带过滤的检索器
+            # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
+            search_kwargs = {"k": k}
             if document_id:
-                search_kwargs = {"k": k, "filter": {"document_id": document_id}}
-                retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
-                result = self.qa_chain({
-                    "query": question,
-                    "retriever": retriever
-                })
-            else:
-                # 使用默认的QA链
-                result = self.qa_chain({"query": question})
+                search_kwargs["filter"] = {"document_id": document_id}
+            retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
+            logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
+            qa_chain = self._build_qa_chain(retriever=retriever)
+            result = qa_chain({"query": question})
             
             # 处理答案
             answer = result.get("result", "抱歉，我无法找到相关信息来回答这个问题。")
             source_docs = result.get("source_documents", [])
+            # 防御性过滤：若指定了 document_id，确保来源文档仅来自该文档
+            if document_id:
+                before = len(source_docs)
+                source_docs = [d for d in source_docs if d.metadata.get("document_id") == document_id]
+                after = len(source_docs)
+                if after < before:
+                    logger.info(f"Filtered source documents by document_id={document_id}: {before} -> {after}")
             
             # 处理源文档
             sources = self._process_source_documents(source_docs)

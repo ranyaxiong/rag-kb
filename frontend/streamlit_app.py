@@ -128,6 +128,13 @@ def main():
                             st.write(f"**块数量:** {doc.get('chunk_count', 'N/A')}")
                             st.write(f"**上传时间:** {doc['upload_time'][:19]}")
                             
+                            # 一键聚焦此文档进行问答（设置检索范围）
+                            if st.button("🎯 基于此文档提问", key=f"focus_{doc['id']}"):
+                                st.session_state.selected_doc_id = doc['id']
+                                st.success("已限定检索范围到该文档。回到上方聊天区继续提问。")
+                                time.sleep(1)
+                                st.rerun()
+                            
                             # 删除按钮
                             if st.button(f"🗑️ 删除", key=f"delete_{doc['id']}"):
                                 delete_response = requests.delete(
