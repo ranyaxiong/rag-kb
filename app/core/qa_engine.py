@@ -130,19 +130,92 @@ class QAEngine:
             # 使用指定的源文档数量或默认值
             k = max_sources or settings.max_sources
             
-            # 首先获取相关文档用于生成上下文hash；若限定文档无命中则回退到全库
-            relevant_docs = self.get_relevant_documents(question, k, document_id)
+            # 首先获取相关文档用于生成上下文hash；
+            # 若限定文档下只有“低相关”（距离大于阈值）或为零，则回退到全库
             used_document_id = document_id
             fallback_note = ""
-            if document_id and len(relevant_docs) == 0:
-                # 回退到全库检索
-                logger.info(f"No hits under document_id={document_id}, fallback to global search")
-                relevant_docs = self.get_relevant_documents(question, k, None)
-                used_document_id = None
-                if len(relevant_docs) > 0:
-                    fallback_note = "提示：在您选定的文档中未检索到相关内容，已自动在全库中扩大检索范围。"
+
+            if document_id:
+                # 使用打分检索做预判（更严格阈值），并与全库结果比较，必要时回退
+                try:
+                    restricted_scored = self.vector_store.similarity_search_with_score(
+                        query=question,
+                        k=max(k, settings.max_sources * 2),
+                        filter_dict={"document_id": document_id},
+                        threshold=settings.relevance_fallback_threshold,
+                    )
+                except Exception as _e:
+                    logger.warning(f"Scored search failed under document scope, fallback to vanilla search: {_e}")
+                    restricted_scored = []
+                # 全库打分（同阈值），用于与限定范围对比
+                try:
+                    global_scored = self.vector_store.similarity_search_with_score(
+                        query=question,
+                        k=max(k, settings.max_sources * 2),
+                        filter_dict=None,
+                        threshold=settings.relevance_fallback_threshold,
+                    )
+                except Exception as _e:
+                    logger.warning(f"Scored search failed for global scope: {_e}")
+                    global_scored = []
+
+                # 计算最优距离（距离越小越好）
+                best_restricted = min([s for (_, s) in restricted_scored], default=None)
+                best_global = min([s for (_, s) in global_scored], default=None)
+
+                # 记录调试信息：展示前3个候选及其距离
+                if restricted_scored:
+                    top_r = restricted_scored[: min(3, len(restricted_scored))]
+                    logger.info(
+                        "Restricted top candidates: "
+                        + ", ".join(
+                            [
+                                f"(doc_id={d.metadata.get('document_id')[:8]}, file={d.metadata.get('filename')}, dist={s:.4f})"
+                                for d, s in top_r
+                            ]
+                        )
+                    )
+                if global_scored:
+                    top_g = global_scored[: min(3, len(global_scored))]
+                    logger.info(
+                        "Global top candidates: "
+                        + ", ".join(
+                            [
+                                f"(doc_id={d.metadata.get('document_id')[:8]}, file={d.metadata.get('filename')}, dist={s:.4f})"
+                                for d, s in top_g
+                            ]
+                        )
+                    )
+
+                should_fallback = False
+                if best_restricted is None and best_global is not None:
+                    should_fallback = True
+                elif best_restricted is not None and best_global is not None:
+                    # 如果全库最优明显优于限定范围（留出安全边际），则回退
+                    margin = getattr(settings, "relevance_fallback_margin", 0.25)
+                    if best_global + margin < best_restricted:
+                        should_fallback = True
+
+                if should_fallback:
+                    logger.info(
+                        f"Fallback to global: best_restricted={best_restricted}, best_global={best_global}, "
+                        f"threshold={settings.relevance_fallback_threshold}"
+                    )
+                    used_document_id = None
+                    # 使用全库阈值过滤后的文档作为上下文（若无则退回无过滤的简单检索）
+                    if len(global_scored) > 0:
+                        relevant_docs = [doc for doc, _ in global_scored][:max(k, settings.max_sources)]
+                        fallback_note = "提示：在您选定的文档中未检索到更相关的内容，已自动在全库中扩大检索范围。"
+                    else:
+                        relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources * 2), None)
+                        fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。"
                 else:
-                    fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。"
+                    # 使用限定范围内阈值过滤后的文档作为上下文
+                    relevant_docs = [doc for doc, _ in restricted_scored][:k]
+            else:
+                # 全库预检（保持原行为即可）
+                relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources), None)
+            
             # 基于最终采用的上下文计算hash
             context_hash = cache_manager.get_context_hash(relevant_docs)
             
@@ -164,11 +237,19 @@ class QAEngine:
                 )
             
             # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
-            search_kwargs = {"k": k}
+            k_effective = k if used_document_id else max(k, settings.max_sources * 2)
+            search_kwargs = {"k": k_effective}
             if used_document_id:
                 search_kwargs["filter"] = {"document_id": used_document_id}
-            retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
-            logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
+            # 构建 retriever：全库检索使用 MMR 增强多样性，降低单文档“淹没”其他文档的情况
+            if used_document_id:
+                retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
+                logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
+            else:
+                mmr_kwargs = {**search_kwargs, "fetch_k": max(20, k_effective * 4), "lambda_mult": 0.5}
+                retriever = self.vector_store.as_retriever(search_type="mmr", search_kwargs=mmr_kwargs)
+                logger.info(f"QAEngine.ask using MMR, search_kwargs={mmr_kwargs}")
+            
             qa_chain = self._build_qa_chain(retriever=retriever)
             result = qa_chain({"query": question})
             

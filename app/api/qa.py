@@ -97,25 +97,58 @@ async def ask_question(payload: QuestionRequest, request: Request):
             if qa_engine is None and not settings.get_api_key():
                 try:
                     k = payload.max_sources or settings.max_sources
-                    filter_dict = {"document_id": payload.document_id} if payload.document_id else None
-                    docs = get_vector_store().similarity_search(
-                        query=payload.question, 
-                        k=k, 
-                        filter_dict=filter_dict
-                    )
                     fallback_note = ""
-                    # 若限定文档无命中则回退到全库
-                    if payload.document_id and len(docs) == 0:
-                        logger.info(f"Demo mode: no hits for document_id={payload.document_id}, fallback to global search")
+
+                    # 使用带分数检索进行判定（更稳健）
+                    docs = []
+                    if payload.document_id:
+                        try:
+                            restricted_scored = get_vector_store().similarity_search_with_score(
+                                query=payload.question,
+                                k=max(k, settings.max_sources * 2),
+                                filter_dict={"document_id": payload.document_id},
+                                threshold=settings.relevance_fallback_threshold,
+                            )
+                        except Exception as _e:
+                            logger.warning(f"Demo scored restricted failed: {_e}")
+                            restricted_scored = []
+                        try:
+                            global_scored = get_vector_store().similarity_search_with_score(
+                                query=payload.question,
+                                k=max(k, settings.max_sources * 2),
+                                filter_dict=None,
+                                threshold=settings.relevance_fallback_threshold,
+                            )
+                        except Exception as _e:
+                            logger.warning(f"Demo scored global failed: {_e}")
+                            global_scored = []
+
+                        best_restricted = min([s for (_, s) in restricted_scored], default=None)
+                        best_global = min([s for (_, s) in global_scored], default=None)
+
+                        should_fallback = False
+                        if best_restricted is None and best_global is not None:
+                            should_fallback = True
+                        elif best_restricted is not None and best_global is not None:
+                            margin = getattr(settings, "relevance_fallback_margin", 0.1)
+                            if best_global + margin < best_restricted:
+                                should_fallback = True
+
+                        if should_fallback:
+                            if len(global_scored) > 0:
+                                docs = [doc for (doc, _) in global_scored][:max(k, settings.max_sources)]
+                                fallback_note = "提示：在您选定的文档中未检索到更相关的内容，已自动在全库中扩大检索范围。\n\n"
+                            else:
+                                docs = []
+                                fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。\n\n"
+                        else:
+                            docs = [doc for (doc, _) in restricted_scored][:k]
+                    else:
+                        # 全库检索（不加阈值过滤，直接返回 top-k）
                         docs = get_vector_store().similarity_search(
                             query=payload.question,
-                            k=k,
-                            filter_dict=None
+                            k=max(k, settings.max_sources)
                         )
-                        if len(docs) > 0:
-                            fallback_note = "提示：在您选定的文档中未检索到相关内容，已自动在全库中扩大检索范围。\n\n"
-                        else:
-                            fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。\n\n"
                     sources = []
                     for doc in docs:
                         content = doc.page_content

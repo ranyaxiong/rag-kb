@@ -189,9 +189,13 @@ class VectorStore:
         self, 
         query: str, 
         k: int = 4,
-        filter_dict: Optional[Dict] = None
+        filter_dict: Optional[Dict] = None,
+        threshold: Optional[float] = None,
     ) -> List[tuple]:
-        """执行带分数的相似度搜索"""
+        """执行带分数的相似度搜索
+        返回 (Document, distance) 列表，并按给定阈值（或默认阈值）过滤。
+        注意：Chroma 返回的是距离（distance），越小越相似。
+        """
         self._ensure_initialized()
         try:
             results = self.vectorstore.similarity_search_with_score(
@@ -200,14 +204,15 @@ class VectorStore:
                 filter=filter_dict
             )
             
-            # ChromaDB返回的是距离(distance)，值越小表示越相似
-            # 因此应该过滤距离大于阈值的结果（保留相似的，去掉不相似的）
+            # 选择阈值：未指定时使用全局默认相似度阈值
+            effective_threshold = settings.similarity_threshold if threshold is None else threshold
+            # 过滤：保留距离小于等于阈值的结果
             filtered_results = [
                 (doc, score) for doc, score in results 
-                if score <= settings.similarity_threshold
+                if score <= effective_threshold
             ]
             
-            logger.info(f"Found {len(filtered_results)} relevant documents (threshold: {settings.similarity_threshold})")
+            logger.info(f"Found {len(filtered_results)} relevant documents (threshold: {effective_threshold})")
             return filtered_results
             
         except Exception as e:
