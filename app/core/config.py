@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # 存储配置
     upload_dir: str = "./data/uploads"
     chroma_db_path: str = "./data/chroma_db"
+    max_file_size_mb: int = 50  # 最大文件上传大小（MB）
     
     # 服务器配置
     backend_host: str = "0.0.0.0"

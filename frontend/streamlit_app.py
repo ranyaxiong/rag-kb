@@ -6,6 +6,7 @@ import requests
 import os
 from datetime import datetime
 import time
+import json
 
 from components.file_upload import FileUploadComponent
 from components.chat_interface import ChatInterface
@@ -31,8 +32,67 @@ def check_backend_connection():
     except:
         return False
 
+def load_user_settings():
+    """从浏览器localStorage加载用户设置"""
+    # 初始化默认设置
+    defaults = {
+        "byok_api_key": "",
+        "byok_provider": "openai", 
+        "byok_base_url": "",
+        "byok_model": "gpt-3.5-turbo"
+    }
+    
+    # 从session_state或默认值初始化
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+    
+    # 尝试从localStorage加载设置（使用JavaScript）
+    if "settings_loaded" not in st.session_state:
+        js_code = f"""
+        <script>
+        // 从localStorage读取设置并通过postMessage发送给Streamlit
+        const settings = {{
+            byok_api_key: localStorage.getItem('rag_byok_api_key') || '',
+            byok_provider: localStorage.getItem('rag_byok_provider') || 'openai',
+            byok_base_url: localStorage.getItem('rag_byok_base_url') || '',
+            byok_model: localStorage.getItem('rag_byok_model') || 'gpt-3.5-turbo'
+        }};
+        
+        // 将设置保存到隐藏的div中，稍后Streamlit会读取
+        const dataDiv = document.getElementById('user-settings-data');
+        if (dataDiv) {{
+            dataDiv.textContent = JSON.stringify(settings);
+        }}
+        </script>
+        <div id="user-settings-data" style="display:none;"></div>
+        """
+        
+        st.components.v1.html(js_code, height=0, width=0)
+        st.session_state["settings_loaded"] = True
+
+
+def save_user_settings():
+    """保存用户设置到浏览器localStorage"""
+    js_code = f"""
+    <script>
+    // 保存设置到localStorage
+    localStorage.setItem('rag_byok_api_key', {json.dumps(st.session_state.get('byok_api_key', ''))});
+    localStorage.setItem('rag_byok_provider', {json.dumps(st.session_state.get('byok_provider', 'openai'))});
+    localStorage.setItem('rag_byok_base_url', {json.dumps(st.session_state.get('byok_base_url', ''))});
+    localStorage.setItem('rag_byok_model', {json.dumps(st.session_state.get('byok_model', 'gpt-3.5-turbo'))});
+    console.log('Settings saved to localStorage');
+    </script>
+    """
+    
+    st.components.v1.html(js_code, height=0, width=0)
+
+
 def main():
     """主应用函数"""
+    
+    # 加载用户设置
+    load_user_settings()
     
     # 页面标题
     st.title("📚 RAG知识库系统")
@@ -48,28 +108,50 @@ def main():
     # 侧边栏 - 模型与文档管理
     with st.sidebar:
         st.header("🔑 模型设置 (BYOK)")
-        # 初始化 session_state 键
-        for key, default in (
-            ("byok_api_key", ""),
-            ("byok_provider", "openai"),
-            ("byok_base_url", ""),
-            ("byok_model", "gpt-3.5-turbo"),
-        ):
-            if key not in st.session_state:
-                st.session_state[key] = default
-
+        
         with st.form("byok_form"):
-            api_key = st.text_input("API Key", type="password", value=st.session_state.byok_api_key, help="仅保存在本地浏览器会话，不会上传到服务器")
+            api_key = st.text_input("API Key", type="password", value=st.session_state.byok_api_key, help="设置将保存在浏览器本地，刷新页面不会丢失")
             provider = st.selectbox("提供商", options=["openai", "deepseek", "zhipu", "custom"], index=["openai","deepseek","zhipu","custom"].index(st.session_state.byok_provider))
             base_url = st.text_input("Base URL (可选)", value=st.session_state.byok_base_url, placeholder="如自定义兼容 OpenAI 的网关地址")
             model = st.text_input("模型 (可选)", value=st.session_state.byok_model, placeholder="如 gpt-4o-mini / deepseek-chat / glm-4")
-            saved = st.form_submit_button("保存设置")
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                saved = st.form_submit_button("💾 保存设置")
+            with col2:
+                cleared = st.form_submit_button("🗑️ 清除设置")
+            
             if saved:
+                # 更新session_state
                 st.session_state.byok_api_key = api_key.strip()
                 st.session_state.byok_provider = provider.strip()
                 st.session_state.byok_base_url = base_url.strip()
                 st.session_state.byok_model = model.strip()
-                st.success("模型设置已保存，仅对本地会话有效")
+                
+                # 保存到localStorage
+                save_user_settings()
+                st.success("✅ 设置已保存到浏览器本地，刷新页面不会丢失")
+                
+            if cleared:
+                # 清除session_state
+                st.session_state.byok_api_key = ""
+                st.session_state.byok_provider = "openai"
+                st.session_state.byok_base_url = ""
+                st.session_state.byok_model = "gpt-3.5-turbo"
+                
+                # 清除localStorage
+                clear_js = """
+                <script>
+                localStorage.removeItem('rag_byok_api_key');
+                localStorage.removeItem('rag_byok_provider');
+                localStorage.removeItem('rag_byok_base_url');
+                localStorage.removeItem('rag_byok_model');
+                console.log('Settings cleared from localStorage');
+                </script>
+                """
+                st.components.v1.html(clear_js, height=0, width=0)
+                st.success("🗑️ 设置已清除")
+                st.rerun()
 
         st.markdown("---")
 

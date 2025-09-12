@@ -44,12 +44,13 @@ async def upload_document(
                 detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
             )
         
-        # 检查文件大小（限制10MB）
+        # 检查文件大小
         file_content = await file.read()
-        if len(file_content) > 10 * 1024 * 1024:
+        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+        if len(file_content) > max_size_bytes:
             raise HTTPException(
                 status_code=400,
-                detail="File size too large. Maximum size is 10MB."
+                detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
             )
         
         # 检查是否为重复文件（基于文件名和大小）
