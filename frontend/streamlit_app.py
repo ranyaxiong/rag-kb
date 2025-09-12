@@ -93,6 +93,54 @@ def main():
                 st.error("获取统计信息失败")
         except Exception as e:
             st.error(f"统计信息获取错误: {str(e)}")
+        
+        # 配额信息显示
+        st.subheader("📊 使用配额")
+        try:
+            # 构建请求头（如果用户设置了BYOK）
+            headers = {}
+            if st.session_state.get("byok_api_key"):
+                headers["Authorization"] = f"Bearer {st.session_state.byok_api_key}"
+                if st.session_state.get("byok_provider"):
+                    headers["X-LLM-Provider"] = st.session_state.byok_provider
+                if st.session_state.get("byok_base_url"):
+                    headers["X-LLM-Base-URL"] = st.session_state.byok_base_url
+                if st.session_state.get("byok_model"):
+                    headers["X-LLM-Model"] = st.session_state.byok_model
+            
+            quota_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/qa/quota", headers=headers)
+            if quota_response.status_code == 200:
+                quota_info = quota_response.json()
+                
+                if not quota_info.get("quota_enabled"):
+                    st.info("🔓 配额限制已禁用")
+                elif quota_info.get("has_custom_key"):
+                    st.success("🔑 使用自定义API Key - 无限制")
+                else:
+                    # 显示配额信息
+                    used = quota_info.get("used_count", 0)
+                    daily_limit = quota_info.get("daily_limit", 5)
+                    remaining = quota_info.get("remaining", 0)
+                    
+                    # 配额进度条
+                    progress = used / daily_limit if daily_limit > 0 else 0
+                    st.metric("今日已用", f"{used}/{daily_limit}")
+                    st.metric("剩余次数", remaining)
+                    
+                    # 进度条颜色根据使用情况变化
+                    if remaining == 0:
+                        st.error("⚠️ 配额已用完")
+                        st.info("💡 填写上方API Key可无限制使用")
+                    elif remaining <= 1:
+                        st.warning(f"⏰ 仅剩 {remaining} 次提问")
+                        st.progress(progress)
+                    else:
+                        st.success(f"✅ 还可提问 {remaining} 次")
+                        st.progress(progress)
+            else:
+                st.warning("获取配额信息失败")
+        except Exception as e:
+            st.warning(f"配额信息获取错误: {str(e)}")
     
     # 主界面 - 问答系统
     st.header("🤖 智能问答")

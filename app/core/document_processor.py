@@ -10,8 +10,7 @@ import logging
 from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredWordDocumentLoader, 
-    TextLoader,
-    UnstructuredMarkdownLoader
+    TextLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -21,16 +20,180 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class MarkdownLoader:
+    """简单的Markdown文档加载器"""
+    
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+    
+    def load(self) -> List[Document]:
+        """加载markdown文件内容"""
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 创建文档对象
+            doc = Document(
+                page_content=content,
+                metadata={'source': self.file_path}
+            )
+            
+            return [doc]
+        except Exception as e:
+            logger.error(f"Error loading markdown file {self.file_path}: {str(e)}")
+            raise
+
+
+class WordDocumentLoader:
+    """自定义Word文档加载器"""
+    
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+    
+    def load(self) -> List[Document]:
+        """加载Word文档内容"""
+        try:
+            import zipfile
+            import xml.etree.ElementTree as ET
+            
+            content = ""
+            
+            # 检查文件扩展名
+            if self.file_path.lower().endswith('.docx'):
+                content = self._extract_docx_content()
+            elif self.file_path.lower().endswith('.doc'):
+                content = self._extract_doc_content()
+            else:
+                raise ValueError(f"不支持的文件格式: {self.file_path}")
+            
+            # 创建文档对象
+            doc = Document(
+                page_content=content,
+                metadata={'source': self.file_path}
+            )
+            
+            return [doc]
+        except Exception as e:
+            logger.error(f"Error loading Word document {self.file_path}: {str(e)}")
+            raise
+    
+    def _extract_docx_content(self) -> str:
+        """从docx文件提取文本内容"""
+        import zipfile
+        import xml.etree.ElementTree as ET
+        
+        try:
+            with zipfile.ZipFile(self.file_path, 'r') as docx:
+                # 读取document.xml文件
+                document_xml = docx.read('word/document.xml')
+                
+                # 解析XML
+                root = ET.fromstring(document_xml)
+                
+                # Word文档的命名空间
+                namespace = {
+                    'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+                }
+                
+                # 提取所有文本节点
+                text_elements = root.findall('.//w:t', namespace)
+                content = ''.join([elem.text or '' for elem in text_elements])
+                
+                return content
+                
+        except Exception as e:
+            logger.error(f"Error extracting content from DOCX file: {str(e)}")
+            # 如果XML解析失败，尝试使用python-docx作为备选
+            try:
+                from docx import Document as DocxDocument
+                doc = DocxDocument(self.file_path)
+                return "\n".join([paragraph.text for paragraph in doc.paragraphs])
+            except ImportError:
+                raise ValueError(f"无法解析Word文档，请确保文件格式正确: {str(e)}")
+            except Exception as docx_error:
+                raise ValueError(f"无法读取Word文档内容: {str(docx_error)}")
+    
+    def _extract_doc_content(self) -> str:
+        """从.doc文件提取文本内容"""
+        try:
+            # 尝试基础文本提取方法（从二进制中提取可读文本）
+            try:
+                logger.info("尝试从.doc文件中提取文本内容")
+                
+                with open(self.file_path, 'rb') as f:
+                    raw_content = f.read()
+                
+                # 方法1：提取连续的可打印字符
+                import re
+                
+                # 查找连续的可打印字符（包括中文Unicode范围）
+                # ASCII可打印字符
+                ascii_parts = re.findall(rb'[\x20-\x7E]{4,}', raw_content)
+                ascii_text = ' '.join([part.decode('ascii', errors='ignore') for part in ascii_parts])
+                
+                # 尝试UTF-16编码（Word常用）
+                utf16_text = ""
+                try:
+                    # 去除BOM标记并尝试解码
+                    if raw_content.startswith(b'\xff\xfe') or raw_content.startswith(b'\xfe\xff'):
+                        utf16_text = raw_content[2:].decode('utf-16', errors='ignore')
+                    else:
+                        utf16_text = raw_content.decode('utf-16le', errors='ignore')
+                    
+                    # 清理UTF-16文本，去除控制字符
+                    utf16_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', utf16_text)
+                    utf16_text = ' '.join(utf16_text.split())  # 规范化空白字符
+                    
+                except Exception as e:
+                    logger.debug(f"UTF-16解码失败: {str(e)}")
+                
+                # 选择最好的结果
+                content = ""
+                if len(utf16_text.strip()) > len(ascii_text.strip()):
+                    content = utf16_text.strip()
+                else:
+                    content = ascii_text.strip()
+                
+                # 检查是否提取到有意义的内容
+                if content and len(content) >= 10:
+                    logger.warning(f"从.doc文件中提取到{len(content)}个字符的内容（可能不完整）")
+                    return content
+                else:
+                    logger.warning("未能从.doc文件中提取到足够的文本内容")
+                    
+            except Exception as e:
+                logger.error(f"文本提取过程中出错: {str(e)}")
+            
+            # 如果无法提取内容，提供清晰的错误信息和建议
+            raise ValueError(
+                "❌ 无法处理.doc格式文件\n\n"
+                "💡 解决方案：\n"
+                "1. 【推荐】使用Microsoft Word打开文件，另存为.docx格式\n"
+                "2. 【简单】将文件另存为.txt格式\n"
+                "3. 【在线转换】使用在线转换工具将.doc转为.docx\n\n"
+                "📋 技术说明：\n"
+                ".doc是Microsoft Word 97-2003的二进制格式，需要专门的解析库。\n"
+                "系统目前完全支持.docx、.pdf、.txt、.md等格式。"
+            )
+            
+        except ValueError:
+            # 重新抛出我们的用户友好错误
+            raise
+        except Exception as e:
+            logger.error(f"Error extracting content from DOC file: {str(e)}")
+            raise ValueError(f"处理.doc文件时发生错误: {str(e)}")
+
+
 class DocumentProcessor:
     """文档处理核心类"""
     
     def __init__(self):
         self.loaders = {
             '.pdf': PyPDFLoader,
-            '.docx': UnstructuredWordDocumentLoader,
-            '.doc': UnstructuredWordDocumentLoader,
+            '.docx': WordDocumentLoader,
+            '.doc': WordDocumentLoader,
             '.txt': TextLoader,
-            '.md': UnstructuredMarkdownLoader
+            '.md': MarkdownLoader
         }
         
         self.text_splitter = RecursiveCharacterTextSplitter(

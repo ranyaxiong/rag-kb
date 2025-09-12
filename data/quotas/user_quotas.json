@@ -1,0 +1,18 @@
+{
+  "8743acd4216a1cc9": {
+    "user_id": "8743acd4216a1cc9",
+    "used_count": 3,
+    "daily_limit": 5,
+    "last_reset_date": "2025-09-12T01:09:16.549677",
+    "first_use_time": "2025-09-12T01:09:16.549677",
+    "last_use_time": "2025-09-12T01:54:00.794542"
+  },
+  "7dd78f7830bbd5d3": {
+    "user_id": "7dd78f7830bbd5d3",
+    "used_count": 5,
+    "daily_limit": 5,
+    "last_reset_date": "2025-09-12T01:12:20.204909",
+    "first_use_time": "2025-09-12T01:12:20.204909",
+    "last_use_time": "2025-09-12T01:57:12.830925"
+  }
+}

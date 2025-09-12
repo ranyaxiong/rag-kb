@@ -1,6 +1,7 @@
 #!/bin/bash
 # 启动脚本
 
+export DOCKER_BUILDKIT=1
 set -e
 
 echo "🚀 启动RAG知识库系统..."
@@ -177,6 +178,7 @@ case $choice in
         
         # 启动开发模式
         cd docker
+        docker-compose -f docker-compose.dev.yml build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
         docker-compose -f docker-compose.dev.yml up -d --build
         
         echo "⏳ 等待服务启动..."

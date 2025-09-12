@@ -86,8 +86,42 @@ async def ask_question(payload: QuestionRequest, request: Request):
         
         # 提取BYOK覆盖，并按需选择引擎
         overrides = _extract_overrides_from_headers(request)
-        engine = None
+        has_custom_key = bool(overrides.get("api_key"))
+        
+        # 配额检查（仅对未提供自定义API Key的用户）
         from app.core.config import settings
+        if settings.enable_quota_limit:
+            from app.core.quota_manager import get_quota_manager
+            quota_manager = get_quota_manager()
+            
+            # 构建请求信息
+            request_info = {
+                'client_ip': request.client.host if request.client else 'unknown',
+                'user_agent': request.headers.get('user-agent', '')
+            }
+            
+            # 检查配额
+            can_use, quota_info = quota_manager.check_and_increment(request_info, has_custom_key)
+            
+            if not can_use:
+                return QuestionResponse(
+                    answer=(
+                        f"🚫 **配额已用完**\n\n"
+                        f"您今日的免费提问次数已达上限（{quota_info.daily_limit}次），明天将自动重置。\n\n"
+                        f"💡 **解决方案**：\n"
+                        f"1. 等待明天配额重置\n"
+                        f"2. 在左侧\"模型设置(BYOK)\"中填写您的API Key，即可无限制使用\n\n"
+                        f"📊 **当前使用情况**：{quota_info.used_count}/{quota_info.daily_limit}"
+                    ),
+                    sources=[],
+                    processing_time=0.0
+                )
+            
+            # 在响应中添加配额信息（用于前端显示）
+            remaining_quota = max(0, quota_info.daily_limit - quota_info.used_count)
+            logger.info(f"User quota: {quota_info.used_count}/{quota_info.daily_limit}, remaining: {remaining_quota}")
+        
+        engine = None
         if overrides.get("api_key"):
             # 用户提供了 Key，创建临时引擎（不影响全局实例与测试桩）
             engine = QAEngine(get_vector_store(), overrides=overrides)
@@ -424,3 +458,132 @@ async def clear_all_cache():
     except Exception as e:
         logger.error(f"Error clearing all cache: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to clear all cache: {str(e)}")
+
+
+@router.get("/quota")
+async def get_quota_info(request: Request):
+    """获取当前用户配额信息"""
+    try:
+        from app.core.config import settings
+        
+        if not settings.enable_quota_limit:
+            return {
+                "quota_enabled": False,
+                "message": "Quota limit is disabled"
+            }
+        
+        from app.core.quota_manager import get_quota_manager
+        quota_manager = get_quota_manager()
+        
+        # 构建请求信息
+        request_info = {
+            'client_ip': request.client.host if request.client else 'unknown',
+            'user_agent': request.headers.get('user-agent', '')
+        }
+        
+        # 检查是否使用了自定义API Key
+        overrides = _extract_overrides_from_headers(request)
+        has_custom_key = bool(overrides.get("api_key"))
+        
+        if has_custom_key:
+            return {
+                "quota_enabled": True,
+                "has_custom_key": True,
+                "used_count": 0,
+                "daily_limit": "unlimited",
+                "remaining": "unlimited",
+                "message": "Using custom API key - no quota limit"
+            }
+        
+        # 获取配额信息
+        quota_info = quota_manager.get_quota_info(request_info)
+        remaining = max(0, quota_info.daily_limit - quota_info.used_count)
+        
+        return {
+            "quota_enabled": True,
+            "has_custom_key": False,
+            "used_count": quota_info.used_count,
+            "daily_limit": quota_info.daily_limit,
+            "remaining": remaining,
+            "last_reset_date": quota_info.last_reset_date,
+            "message": f"Using default API key - {remaining}/{quota_info.daily_limit} questions remaining today"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting quota info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get quota info: {str(e)}")
+
+
+@router.post("/quota/reset")
+async def reset_quota(request: Request, admin_key: Optional[str] = None):
+    """重置当前用户配额（管理员功能）"""
+    try:
+        from app.core.config import settings
+        
+        if not settings.enable_quota_limit:
+            raise HTTPException(status_code=400, detail="Quota limit is disabled")
+        
+        # 简单的管理员验证（实际应用中应使用更安全的方式）
+        if admin_key != "admin123":  # 这里应该使用更安全的管理员密钥
+            raise HTTPException(status_code=403, detail="Admin key required")
+        
+        from app.core.quota_manager import get_quota_manager
+        quota_manager = get_quota_manager()
+        
+        # 构建请求信息
+        request_info = {
+            'client_ip': request.client.host if request.client else 'unknown',
+            'user_agent': request.headers.get('user-agent', '')
+        }
+        
+        # 重置配额
+        success = quota_manager.reset_user_quota(request_info)
+        
+        if success:
+            return {
+                "success": True,
+                "message": "User quota reset successfully"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "User not found or quota already at zero"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting quota: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset quota: {str(e)}")
+
+
+@router.get("/quota/stats")
+async def get_all_quota_stats(admin_key: Optional[str] = None):
+    """获取所有用户配额统计（管理员功能）"""
+    try:
+        from app.core.config import settings
+        
+        if not settings.enable_quota_limit:
+            raise HTTPException(status_code=400, detail="Quota limit is disabled")
+        
+        # 简单的管理员验证
+        if admin_key != "admin123":
+            raise HTTPException(status_code=403, detail="Admin key required")
+        
+        from app.core.quota_manager import get_quota_manager
+        quota_manager = get_quota_manager()
+        
+        all_quotas = quota_manager.get_all_quotas()
+        
+        return {
+            "success": True,
+            "total_users": len(all_quotas),
+            "quotas": all_quotas,
+            "default_daily_limit": settings.default_daily_quota
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting quota stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get quota stats: {str(e)}")

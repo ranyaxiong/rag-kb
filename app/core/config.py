@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1     # 降低随机性提高缓存命中
     llm_max_tokens: int = 800        # 减少生成token数
     
+    # 配额限制配置
+    enable_quota_limit: bool = True  # 是否启用配额限制
+    default_daily_quota: int = 5     # 默认每日配额（未提供自定义API Key的用户）
+    quota_storage_path: str = "./data/quotas"  # 配额数据存储路径
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
