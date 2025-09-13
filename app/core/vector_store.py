@@ -113,6 +113,24 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error initializing vector store: {str(e)}")
             raise
+
+    def _ensure_chroma_client_only(self):
+        """仅初始化Chroma客户端（不初始化嵌入模型），用于轻量级元数据查询"""
+        if self.chroma_client is not None:
+            return
+        try:
+            # 直接使用持久化客户端，避免LangChain封装与embeddings初始化
+            self.chroma_client = chromadb.PersistentClient(path=settings.chroma_db_path)
+            # 确保集合存在
+            try:
+                self.chroma_client.get_collection(self.collection_name)
+            except Exception:
+                self.chroma_client.create_collection(self.collection_name)
+            logger.debug("Chroma client (lightweight) initialized")
+        except Exception as e:
+            logger.error(f"Error initializing lightweight Chroma client: {str(e)}")
+            # 兜底：如果轻量初始化失败，回退到完整初始化
+            self._ensure_initialized()
     
     def add_documents(self, documents: List[Document]) -> List[str]:
         """添加文档到向量存储"""
@@ -295,6 +313,54 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error listing documents: {str(e)}")
             return []
+    
+    def document_exists_by_filename(self, filename: str) -> bool:
+        """使用元数据精确查询判断文件名是否已存在，避免全量扫描且避免初始化embeddings"""
+        # 仅初始化Chroma客户端，避免加载embeddings
+        self._ensure_chroma_client_only()
+        try:
+            collection = self.chroma_client.get_collection(self.collection_name)
+            # 进行元数据过滤查询，直接检查是否返回任何ID
+            results = collection.get(where={"filename": filename})
+            ids = results.get("ids") if isinstance(results, dict) else None
+            return bool(ids)
+        except Exception as e:
+            logger.warning(f"Error checking filename existence: {str(e)}")
+            return False
+
+    def _get_document_summary_by_key(self, key: str, value: str) -> Optional[Dict[str, Any]]:
+        """根据某个元数据键查询并汇总文档信息（轻量，避免初始化embeddings）"""
+        self._ensure_chroma_client_only()
+        try:
+            collection = self.chroma_client.get_collection(self.collection_name)
+            results = collection.get(where={key: value})
+            if not isinstance(results, dict):
+                return None
+            metadatas = results.get("metadatas")
+            if not metadatas:
+                return None
+            # metadatas 是一个包含每个chunk元数据的列表
+            chunk_count = len(metadatas)
+            first = metadatas[0] if chunk_count > 0 else {}
+            return {
+                "document_id": first.get("document_id"),
+                "async_document_id": first.get("async_document_id"),
+                "filename": first.get("filename"),
+                "chunk_count": chunk_count,
+                "processed_at": first.get("processed_at"),
+                "file_path": first.get("file_path"),
+            }
+        except Exception as e:
+            logger.warning(f"Error getting document summary by {key}: {str(e)}")
+            return None
+
+    def get_summary_by_async_document_id(self, async_document_id: str) -> Optional[Dict[str, Any]]:
+        """按异步返回的document_id查询文档汇总（轻量）"""
+        return self._get_document_summary_by_key("async_document_id", async_document_id)
+
+    def get_summary_by_document_id(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """按内部document_id查询文档汇总（轻量）"""
+        return self._get_document_summary_by_key("document_id", document_id)
     
     def health_check(self) -> Dict[str, Any]:
         """健康检查"""

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # 存储配置
     upload_dir: str = "./data/uploads"
     chroma_db_path: str = "./data/chroma_db"
+    # 临时上传目录（容器本地，写入更快，用于先写临时再后台搬迁）
+    temp_upload_dir: str = "/tmp/rag_uploads"
+    # 作业状态目录（用于持久化处理进度/错误）
+    job_status_dir: str = "./data/job_status"
     max_file_size_mb: int = 50  # 最大文件上传大小（MB）
     
     # 服务器配置
@@ -95,6 +99,16 @@ class Settings(BaseSettings):
         # 确保目录存在
         os.makedirs(self.upload_dir, exist_ok=True)
         os.makedirs(self.chroma_db_path, exist_ok=True)
+        # 确保临时目录存在
+        try:
+            os.makedirs(self.temp_upload_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create temp upload dir {self.temp_upload_dir}: {e}")
+        # 确保作业状态目录存在
+        try:
+            os.makedirs(self.job_status_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create job status dir {self.job_status_dir}: {e}")
     
     def get_api_key(self) -> Optional[str]:
         """安全地获取API Key（支持多种提供商）"""

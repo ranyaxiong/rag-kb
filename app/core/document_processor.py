@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 import logging
+import shutil
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -167,11 +168,11 @@ class WordDocumentLoader:
             # 如果无法提取内容，提供清晰的错误信息和建议
             raise ValueError(
                 "❌ 无法处理.doc格式文件\n\n"
-                "💡 解决方案：\n"
+                "💡 解决方案:\n"
                 "1. 【推荐】使用Microsoft Word打开文件，另存为.docx格式\n"
                 "2. 【简单】将文件另存为.txt格式\n"
                 "3. 【在线转换】使用在线转换工具将.doc转为.docx\n\n"
-                "📋 技术说明：\n"
+                "📋 技术说明:\n"
                 ".doc是Microsoft Word 97-2003的二进制格式，需要专门的解析库。\n"
                 "系统目前完全支持.docx、.pdf、.txt、.md等格式。"
             )
@@ -184,12 +185,96 @@ class WordDocumentLoader:
             raise ValueError(f"处理.doc文件时发生错误: {str(e)}")
 
 
+class SmartPDFLoader:
+    """智能PDF加载器，自动选择最佳处理策略"""
+    
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        # 惰性导入，避免模块导入失败导致整个处理器不可用
+        try:
+            from app.core.enhanced_pdf_processor import EnhancedPDFProcessor
+            self.enhanced_processor = EnhancedPDFProcessor()
+        except Exception as e:
+            logger.warning(f"EnhancedPDFProcessor unavailable, fallback to PyPDFLoader: {e}")
+            self.enhanced_processor = None
+        
+    def load(self) -> List[Document]:
+        """加载PDF文档，智能选择处理方法"""
+        try:
+            # 检查是否可以使用增强处理器
+            processing_info = None
+            if self.enhanced_processor is not None:
+                processing_info = self.enhanced_processor.get_processing_info(self.file_path)
+            
+            # 使用增强处理器
+            if self.enhanced_processor is not None:
+                try:
+                    documents = self.enhanced_processor.load(self.file_path)
+                    if documents and any(doc.page_content.strip() for doc in documents):
+                        logger.info(f"使用增强PDF处理器成功处理: {self.file_path}")
+                        return documents
+                except Exception as e:
+                    logger.warning(f"增强PDF处理器失败，回退到标准处理器: {str(e)}")
+            
+            # 回退到标准PDF处理器
+            standard_loader = PyPDFLoader(self.file_path)
+            documents = standard_loader.load()
+            
+            if not documents or not any(doc.page_content.strip() for doc in documents):
+                logger.warning(f"标准PDF处理器也未提取到内容: {self.file_path}")
+                
+                # 最后尝试：提供处理建议
+                suggestions = self._get_processing_suggestions(processing_info)
+                error_msg = f"无法从PDF中提取文本内容。\n\n{suggestions}"
+                raise ValueError(error_msg)
+            
+            logger.info(f"使用标准PDF处理器处理: {self.file_path}")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"PDF处理完全失败: {self.file_path} - {str(e)}")
+            raise
+    
+    def _get_processing_suggestions(self, processing_info: Dict) -> str:
+        """基于PDF分析结果提供处理建议"""
+        suggestions = []
+        
+        pdf_analysis = processing_info.get('pdf_analysis', {})
+        is_scanned = pdf_analysis.get('is_scanned', False)
+        ocr_available = processing_info.get('ocr_available', False)
+        
+        if is_scanned:
+            suggestions.append("📋 检测结果: 这似乎是一个扫描类PDF（图像格式）")
+            
+            if not ocr_available:
+                suggestions.extend([
+                    "💡 解决方案:",
+                    "1. 安装OCR依赖以自动处理扫描类PDF:",
+                    "   pip install pytesseract pillow",
+                    "2. 安装Tesseract-OCR引擎:",
+                    "   - Windows: https://github.com/UB-Mannheim/tesseract/wiki",
+                    "   - 或将PDF转换为可搜索的PDF格式",
+                ])
+            else:
+                suggestions.append("❗ OCR功能可用但处理失败，可能是PDF格式问题")
+        else:
+            suggestions.extend([
+                "📋 这个PDF应该包含可提取的文本，但提取失败",
+                "💡 建议:",
+                "1. 检查PDF是否受密码保护",
+                "2. 尝试用其他PDF查看器打开验证文件完整性",
+                "3. 将PDF另存为新文件后重试"
+            ])
+        
+        return "\n".join(suggestions)
+
+
 class DocumentProcessor:
     """文档处理核心类"""
     
     def __init__(self):
         self.loaders = {
-            '.pdf': PyPDFLoader,
+            '.pdf': SmartPDFLoader,
             '.docx': WordDocumentLoader,
             '.doc': WordDocumentLoader,
             '.txt': TextLoader,
@@ -234,6 +319,51 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error saving file {filename}: {str(e)}")
             raise
+    
+    def save_to_temp_file(self, file_content: bytes, filename: str) -> str:
+        """先将上传内容保存到容器本地临时目录，写入更快，返回临时路径"""
+        try:
+            file_id = str(uuid.uuid4())
+            safe_filename = f"{file_id}_{filename}"
+            date_dir = datetime.now().strftime("%Y-%m-%d")
+            full_dir = os.path.join(settings.temp_upload_dir, date_dir)
+            os.makedirs(full_dir, exist_ok=True)
+            temp_path = os.path.join(full_dir, safe_filename)
+            with open(temp_path, 'wb') as f:
+                f.write(file_content)
+            logger.info(f"Temp file saved: {temp_path}")
+            return temp_path
+        except Exception as e:
+            logger.error(f"Error saving temp file {filename}: {str(e)}")
+            raise
+
+    def move_to_upload_dir(self, temp_file_path: str, original_filename: str) -> str:
+        """将临时文件移动到最终上传目录，保持同名，返回最终路径"""
+        try:
+            if not os.path.exists(temp_file_path):
+                raise FileNotFoundError(f"Temp file not found: {temp_file_path}")
+            base_name = os.path.basename(temp_file_path)
+            date_dir = datetime.now().strftime("%Y-%m-%d")
+            dest_dir = os.path.join(settings.upload_dir, date_dir)
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_path = os.path.join(dest_dir, base_name)
+            # 如果目标已存在（极少见），在文件名后追加后缀
+            if os.path.exists(dest_path):
+                name, ext = os.path.splitext(base_name)
+                dest_path = os.path.join(dest_dir, f"{name}_moved{ext}")
+            shutil.move(temp_file_path, dest_path)
+            logger.info(f"Moved temp file to upload dir: {dest_path}")
+            return dest_path
+        except Exception as e:
+            logger.error(f"Error moving temp file to upload dir: {str(e)}")
+            raise
+
+    def is_in_temp_dir(self, file_path: str) -> bool:
+        """判断路径是否位于临时上传目录下"""
+        try:
+            return os.path.abspath(file_path).startswith(os.path.abspath(settings.temp_upload_dir))
+        except Exception:
+            return False
     
     def load_document(self, file_path: str) -> List[Document]:
         """加载文档内容"""
