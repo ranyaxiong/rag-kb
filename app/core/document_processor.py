@@ -463,3 +463,7 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error getting document info for {file_path}: {str(e)}")
             return None
+
+
+# 全局单例实例
+doc_processor = DocumentProcessor()

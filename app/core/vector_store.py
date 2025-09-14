@@ -9,7 +9,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 
 from app.core.config import settings
 from app.core.cache_manager import cache_manager
@@ -94,7 +94,8 @@ class VectorStore:
             # 配置ChromaDB
             chroma_settings = ChromaSettings(
                 persist_directory=settings.chroma_db_path,
-                anonymized_telemetry=False
+                anonymized_telemetry=False,
+                allow_reset=True
             )
             
             # 使用直接的client_settings方式初始化Langchain的Chroma包装器
@@ -150,7 +151,12 @@ class VectorStore:
             # 尝试批量添加
             try:
                 self.vectorstore.add_documents(documents, ids=doc_ids)
-                self.vectorstore.persist()
+                # 在新版本 langchain-chroma 中不再需要 persist()；为兼容老版本做条件调用
+                try:
+                    if hasattr(self.vectorstore, "persist"):
+                        self.vectorstore.persist()
+                except Exception as _:
+                    logger.debug("Vector store persist() not supported; skipping explicit persist")
                 logger.info(f"Added {len(documents)} documents to vector store (batch mode)")
                 return doc_ids
             except Exception as batch_error:
@@ -169,9 +175,13 @@ class VectorStore:
                         logger.error(f"Failed to add document {i+1}: {str(individual_error)}")
                         continue
                 
-                # 持久化所有成功的文档
+                # 持久化所有成功的文档（新版本无需，保留兼容）
                 if successful_ids:
-                    self.vectorstore.persist()
+                    try:
+                        if hasattr(self.vectorstore, "persist"):
+                            self.vectorstore.persist()
+                    except Exception as _:
+                        logger.debug("Vector store persist() not supported; skipping explicit persist")
                     logger.info(f"Added {len(successful_ids)}/{len(documents)} documents to vector store (individual mode)")
                     return successful_ids
                 else:
@@ -268,37 +278,58 @@ class VectorStore:
         """获取集合信息"""
         self._ensure_initialized()
         try:
-            collection = self.chroma_client.get_collection(self.collection_name)
+            # 优先使用与当前LangChain向量库绑定的collection，避免路径不一致
+            collection = getattr(self.vectorstore, "_collection", None)
+            if collection is None:
+                if self.chroma_client is None:
+                    self._ensure_chroma_client_only()
+                collection = self.chroma_client.get_collection(self.collection_name)
+
             count = collection.count()
-            
             return {
                 "collection_name": self.collection_name,
                 "document_count": count,
                 "embedding_model": "text-embedding-ada-002"
             }
-            
         except Exception as e:
             logger.error(f"Error getting collection info: {str(e)}")
             return {"error": str(e)}
-    
+
     def list_documents(self) -> List[Dict[str, Any]]:
         """列出所有文档的基本信息"""
         self._ensure_initialized()
         try:
-            collection = self.chroma_client.get_collection(self.collection_name)
-            
-            # 获取所有文档的元数据
-            results = collection.get(include=['metadatas'])
-            
-            if not results or not results['metadatas']:
+            # 优先使用与当前LangChain向量库绑定的collection，避免路径不一致
+            collection = getattr(self.vectorstore, "_collection", None)
+            if collection is None:
+                if self.chroma_client is None:
+                    self._ensure_chroma_client_only()
+                collection = self.chroma_client.get_collection(self.collection_name)
+
+            # 获取所有文档的元数据（加大limit，避免默认分页导致漏数据）
+            results = collection.get(include=["metadatas"], limit=100000)
+            metadatas = results.get("metadatas") if isinstance(results, dict) else None
+            if not metadatas:
+                # 记录一次计数供诊断
+                try:
+                    cnt = collection.count()
+                    logger.info(f"list_documents(): metadatas empty, collection.count()={cnt}")
+                except Exception:
+                    pass
                 return []
-            
-            # 按document_id分组
-            documents = {}
-            for metadata in results['metadatas']:
+
+            # 按document_id分组（兼容某些版本返回的嵌套结构）
+            documents: Dict[str, Dict[str, Any]] = {}
+            flat_list: List[Dict[str, Any]] = []
+            for item in metadatas:
+                if isinstance(item, list):
+                    flat_list.extend([m for m in item if isinstance(m, dict)])
+                elif isinstance(item, dict):
+                    flat_list.append(item)
+
+            for metadata in flat_list:
                 doc_id = metadata.get('document_id', 'unknown')
                 filename = metadata.get('filename', 'unknown')
-                
                 if doc_id not in documents:
                     documents[doc_id] = {
                         'document_id': doc_id,
@@ -307,13 +338,12 @@ class VectorStore:
                         'processed_at': metadata.get('processed_at')
                     }
                 documents[doc_id]['chunk_count'] += 1
-            
+
             return list(documents.values())
-            
         except Exception as e:
             logger.error(f"Error listing documents: {str(e)}")
             return []
-    
+
     def document_exists_by_filename(self, filename: str) -> bool:
         """使用元数据精确查询判断文件名是否已存在，避免全量扫描且避免初始化embeddings"""
         # 仅初始化Chroma客户端，避免加载embeddings
@@ -391,3 +421,14 @@ class VectorStore:
         """返回LangChain检索器接口"""
         self._ensure_initialized()
         return self.vectorstore.as_retriever(**kwargs)
+
+
+# 全局单例实例
+_vector_store_instance = None
+
+def get_vector_store() -> VectorStore:
+    """获取向量存储单例实例"""
+    global _vector_store_instance
+    if _vector_store_instance is None:
+        _vector_store_instance = VectorStore()
+    return _vector_store_instance

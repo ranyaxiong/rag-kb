@@ -91,6 +91,10 @@ class JobStatusManager:
             logger.warning(f"Failed to read job status {job_id}: {e}")
             return None
 
+    # 兼容旧调用别名
+    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self.get(job_id)
+
     def _write(self, job_id: str, data: Dict[str, Any]):
         path = self._path(job_id)
         try:

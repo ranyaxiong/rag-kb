@@ -3,6 +3,7 @@
 """
 import logging
 import os
+import uuid
 from typing import List
 from datetime import datetime
 
@@ -14,6 +15,7 @@ from app.core.document_processor import DocumentProcessor
 from app.core.vector_store import VectorStore
 from app.models.schemas import Document, ApiResponse
 from app.core.job_status import job_status
+from app.core.async_processor import async_processor
 
 logger = logging.getLogger(__name__)
 
@@ -32,73 +34,37 @@ def get_vector_store():
 
 
 @router.post("/upload-async")
-async def upload_document_async(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
-):
-    """快速上传文档（异步处理，立即返回）"""
+async def upload_document_async(file: UploadFile = File(...)):
+    """真正的异步上传（线程池版本）"""
     try:
-        # 检查文件类型
-        if not doc_processor.is_supported_file(file.filename):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
-            )
+        # 验证文件...
         
-        # 检查文件大小
+        # 保存到临时目录
         file_content = await file.read()
-        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
-        if len(file_content) > max_size_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
-            )
-        
-        # 高效重复检查（按文件名）
-        if get_vector_store().document_exists_by_filename(file.filename):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
-            )
-        
-        # 先保存到容器本地临时目录（更快），后台任务再搬迁到挂载卷
         temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
         
         # 生成文档ID
-        import uuid
         document_id = str(uuid.uuid4())
-        # 初始化作业状态
-        try:
-            job_status.init_job(document_id, file.filename, {
-                "processing_mode": "async",
-                "stage": "uploaded"
-            })
-        except Exception as _:
-            pass
         
-        # 立即启动后台处理
-        background_tasks.add_task(
-            process_document_background,
-            temp_path,
-            file.filename,
-            document_id
-        )
+        # 初始化作业状态
+        job_status.init_job(document_id, file.filename, {
+            "processing_mode": "async_thread",
+            "stage": "queued"
+        })
+        
+        # 提交到线程池（立即返回）
+        async_processor.submit_task(document_id, temp_path, file.filename)
         
         return {
             "success": True,
-            "message": "File uploaded successfully! Processing started in background.",
+            "message": "文件上传成功，已加入处理队列",
             "document_id": document_id,
-            "filename": file.filename,
-            "status": "processing",
-            "processing_mode": "async",
-            "note": "Use /api/documents/status/{document_id} to check processing progress"
+            "status": "queued"
         }
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error in async upload: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        logger.error(f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/upload")
@@ -289,51 +255,22 @@ async def process_document_background(file_path: str, filename: str, document_id
 
 @router.get("/status/{document_id}")
 async def get_processing_status(document_id: str):
-    """获取文档处理状态"""
+    """获取处理状态（线程池版本）"""
     try:
-        # 先查作业状态（JSON 持久化）
-        job = None
-        try:
-            job = job_status.get(document_id)
-        except Exception:
-            job = None
-        if job:
-            # 如果已完成/失败，直接返回；处理中则返回进度
-            return {
-                "success": True,
-                **job
-            }
-
-        # 轻量查询：优先按 async_document_id（前端收到的ID）查询
-        vs = get_vector_store()
-        summary = vs.get_summary_by_async_document_id(document_id)
-        if not summary:
-            # 回退到内部 document_id 查询
-            summary = vs.get_summary_by_document_id(document_id)
-
-        if summary:
-            return {
-                "success": True,
-                "document_id": document_id,
-                "status": "completed",
-                "chunk_count": summary.get('chunk_count', 0),
-                "filename": summary.get('filename', 'Unknown')
-            }
-
-        # 如果没找到，可能还在处理中
-        return {
-            "success": True,
-            "document_id": document_id,
-            "status": "processing",
-            "message": "Document is still being processed. Please check again in a few minutes."
-        }
+        # 先检查线程池状态
+        thread_status = async_processor.get_task_status(document_id)
+        if thread_status:
+            return thread_status
+        
+        # 回退到job_status检查
+        status_info = job_status.get_job_status(document_id)
+        if not status_info:
+            raise HTTPException(status_code=404, detail="Document not found")
+            
+        return status_info
         
     except Exception as e:
-        logger.error(f"Error checking processing status: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/", response_model=List[Document])

@@ -40,48 +40,100 @@ def check_backend_connection():
     except:
         return False
 
+def load_with_html_fallback():
+    """使用HTML方式读取localStorage的备用方案"""
+    # 创建一个隐藏的HTML组件来读取localStorage
+    html_code = """
+    <script>
+    // 读取localStorage并设置到隐藏元素中
+    function loadSettings() {
+        const settings = {
+            api_key: localStorage.getItem('rag_byok_api_key') || '',
+            provider: localStorage.getItem('rag_byok_provider') || 'openai',
+            base_url: localStorage.getItem('rag_byok_base_url') || '',
+            model: localStorage.getItem('rag_byok_model') || 'gpt-3.5-turbo'
+        };
+
+        // 将设置数据发送给父窗口
+        window.parent.postMessage({
+            type: 'localStorage_data',
+            data: settings
+        }, '*');
+
+        // 也设置到隐藏元素中作为备用
+        document.getElementById('settings-data').textContent = JSON.stringify(settings);
+    }
+
+    // 页面加载完成后执行
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadSettings);
+    } else {
+        loadSettings();
+    }
+    </script>
+    <div id="settings-data" style="display:none;"></div>
+    """
+
+    # 显示HTML组件
+    st.components.v1.html(html_code, height=0, width=0)
+
 def load_user_settings():
     """从浏览器localStorage加载用户设置"""
     # 初始化默认设置
     defaults = {
         "byok_api_key": "",
-        "byok_provider": "openai", 
+        "byok_provider": "openai",
         "byok_base_url": "",
         "byok_model": "gpt-3.5-turbo"
     }
-    
+
     # 从session_state或默认值初始化
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
-    
-    # 尝试从localStorage加载设置
-    if "settings_loaded" not in st.session_state:
+
+    # 尝试从localStorage加载设置（注意：组件首次渲染返回None，需要等待下一次重渲染）
+    if not st.session_state.get("settings_loaded", False):
         if JS_EVAL_AVAILABLE:
-            # 使用streamlit-js-eval直接读取localStorage
             try:
-                api_key = streamlit_js_eval("localStorage.getItem('rag_byok_api_key') || ''", key="load_api_key")
-                provider = streamlit_js_eval("localStorage.getItem('rag_byok_provider') || 'openai'", key="load_provider")
-                base_url = streamlit_js_eval("localStorage.getItem('rag_byok_base_url') || ''", key="load_base_url")
-                model = streamlit_js_eval("localStorage.getItem('rag_byok_model') || 'gpt-3.5-turbo'", key="load_model")
-                
-                # 更新session_state（如果从localStorage读取到了非空值）
-                if api_key:
-                    st.session_state.byok_api_key = api_key
-                if provider and provider != 'openai':
-                    st.session_state.byok_provider = provider
-                if base_url:
-                    st.session_state.byok_base_url = base_url
-                if model and model != 'gpt-3.5-turbo':
-                    st.session_state.byok_model = model
-                    
+                api_key = streamlit_js_eval(
+                    js_expressions="localStorage.getItem('rag_byok_api_key')",
+                    key="load_api_key",
+                    want_output=True,
+                )
+                provider = streamlit_js_eval(
+                    js_expressions="localStorage.getItem('rag_byok_provider')",
+                    key="load_provider",
+                    want_output=True,
+                )
+                base_url = streamlit_js_eval(
+                    js_expressions="localStorage.getItem('rag_byok_base_url')",
+                    key="load_base_url",
+                    want_output=True,
+                )
+                model = streamlit_js_eval(
+                    js_expressions="localStorage.getItem('rag_byok_model')",
+                    key="load_model",
+                    want_output=True,
+                )
+
+                # 只有在组件返回了有效值（非None）时才应用并标记为已加载
+                got_any_value = any(v is not None for v in [api_key, provider, base_url, model])
+                if got_any_value:
+                    if isinstance(api_key, str) and api_key.strip():
+                        st.session_state.byok_api_key = api_key.strip()
+                    if isinstance(provider, str) and provider.strip():
+                        st.session_state.byok_provider = provider.strip()
+                    if isinstance(base_url, str) and base_url.strip():
+                        st.session_state.byok_base_url = base_url.strip()
+                    if isinstance(model, str) and model.strip():
+                        st.session_state.byok_model = model.strip()
+                    st.session_state["settings_loaded"] = True
             except Exception as e:
                 st.warning(f"从localStorage加载设置时出错: {e}")
         else:
-            # 备用方案：使用URL参数传递设置（需要用户手动操作）
-            st.info("💡 提示：安装 `pip install streamlit-js-eval` 可自动恢复保存的设置")
-        
-        st.session_state["settings_loaded"] = True
+            # 无JS组件时不做强制标记，保持每次渲染尝试
+            pass
 
 
 def save_user_settings():
@@ -89,25 +141,62 @@ def save_user_settings():
     if JS_EVAL_AVAILABLE:
         # 使用streamlit-js-eval保存到localStorage
         try:
-            streamlit_js_eval(f"localStorage.setItem('rag_byok_api_key', {json.dumps(st.session_state.get('byok_api_key', ''))})", key="save_api_key")
-            streamlit_js_eval(f"localStorage.setItem('rag_byok_provider', {json.dumps(st.session_state.get('byok_provider', 'openai'))})", key="save_provider")
-            streamlit_js_eval(f"localStorage.setItem('rag_byok_base_url', {json.dumps(st.session_state.get('byok_base_url', ''))})", key="save_base_url")
-            streamlit_js_eval(f"localStorage.setItem('rag_byok_model', {json.dumps(st.session_state.get('byok_model', 'gpt-3.5-turbo'))})", key="save_model")
+            # 获取当前设置值
+            api_key = st.session_state.get('byok_api_key', '')
+            provider = st.session_state.get('byok_provider', 'openai')
+            base_url = st.session_state.get('byok_base_url', '')
+            model = st.session_state.get('byok_model', 'gpt-3.5-turbo')
+
+            # 保存到localStorage，使用want_output=False因为我们不需要返回值
+            streamlit_js_eval(
+                js_expressions=f"localStorage.setItem('rag_byok_api_key', {json.dumps(api_key)})",
+                key="save_api_key",
+                want_output=False
+            )
+            streamlit_js_eval(
+                js_expressions=f"localStorage.setItem('rag_byok_provider', {json.dumps(provider)})",
+                key="save_provider",
+                want_output=False
+            )
+            streamlit_js_eval(
+                js_expressions=f"localStorage.setItem('rag_byok_base_url', {json.dumps(base_url)})",
+                key="save_base_url",
+                want_output=False
+            )
+            streamlit_js_eval(
+                js_expressions=f"localStorage.setItem('rag_byok_model', {json.dumps(model)})",
+                key="save_model",
+                want_output=False
+            )
+
+            # 验证保存是否成功
+            streamlit_js_eval(
+                js_expressions="console.log('Settings saved to localStorage:', localStorage.getItem('rag_byok_api_key'))",
+                key="verify_save",
+                want_output=False
+            )
+
         except Exception as e:
             st.error(f"保存设置时出错: {e}")
     else:
         # 备用方案：使用原有的HTML方法
+        api_key = st.session_state.get('byok_api_key', '')
+        provider = st.session_state.get('byok_provider', 'openai')
+        base_url = st.session_state.get('byok_base_url', '')
+        model = st.session_state.get('byok_model', 'gpt-3.5-turbo')
+
         js_code = f"""
         <script>
         // 保存设置到localStorage
-        localStorage.setItem('rag_byok_api_key', {json.dumps(st.session_state.get('byok_api_key', ''))});
-        localStorage.setItem('rag_byok_provider', {json.dumps(st.session_state.get('byok_provider', 'openai'))});
-        localStorage.setItem('rag_byok_base_url', {json.dumps(st.session_state.get('byok_base_url', ''))});
-        localStorage.setItem('rag_byok_model', {json.dumps(st.session_state.get('byok_model', 'gpt-3.5-turbo'))});
-        console.log('Settings saved to localStorage');
+        localStorage.setItem('rag_byok_api_key', {json.dumps(api_key)});
+        localStorage.setItem('rag_byok_provider', {json.dumps(provider)});
+        localStorage.setItem('rag_byok_base_url', {json.dumps(base_url)});
+        localStorage.setItem('rag_byok_model', {json.dumps(model)});
+        console.log('Settings saved to localStorage via HTML fallback');
+        console.log('API Key saved:', localStorage.getItem('rag_byok_api_key'));
         </script>
         """
-        
+
         st.components.v1.html(js_code, height=0, width=0)
 
 
@@ -115,10 +204,10 @@ def clear_user_settings():
     """清除用户设置"""
     if JS_EVAL_AVAILABLE:
         try:
-            streamlit_js_eval("localStorage.removeItem('rag_byok_api_key')", key="clear_api_key")
-            streamlit_js_eval("localStorage.removeItem('rag_byok_provider')", key="clear_provider")
-            streamlit_js_eval("localStorage.removeItem('rag_byok_base_url')", key="clear_base_url")
-            streamlit_js_eval("localStorage.removeItem('rag_byok_model')", key="clear_model")
+            streamlit_js_eval(js_expressions="localStorage.removeItem('rag_byok_api_key')", key="clear_api_key")
+            streamlit_js_eval(js_expressions="localStorage.removeItem('rag_byok_provider')", key="clear_provider")
+            streamlit_js_eval(js_expressions="localStorage.removeItem('rag_byok_base_url')", key="clear_base_url")
+            streamlit_js_eval(js_expressions="localStorage.removeItem('rag_byok_model')", key="clear_model")
         except Exception as e:
             st.error(f"清除设置时出错: {e}")
     else:
@@ -133,6 +222,30 @@ def clear_user_settings():
         </script>
         """
         st.components.v1.html(clear_js, height=0, width=0)
+
+def debug_localStorage():
+    """调试localStorage状态"""
+    if JS_EVAL_AVAILABLE:
+        try:
+            # 读取所有localStorage值进行调试
+            debug_info = streamlit_js_eval(
+                js_expressions="""
+                JSON.stringify({
+                    api_key: localStorage.getItem('rag_byok_api_key'),
+                    provider: localStorage.getItem('rag_byok_provider'),
+                    base_url: localStorage.getItem('rag_byok_base_url'),
+                    model: localStorage.getItem('rag_byok_model'),
+                    all_keys: Object.keys(localStorage).filter(k => k.startsWith('rag_'))
+                })
+                """,
+                key="debug_localStorage",
+                want_output=True
+            )
+            return debug_info
+        except Exception as e:
+            return f"调试localStorage时出错: {e}"
+    else:
+        return "streamlit-js-eval 不可用"
 
 def main():
     """主应用函数"""
@@ -177,6 +290,11 @@ def main():
                 # 保存到localStorage
                 save_user_settings()
                 st.success("✅ 设置已保存到浏览器本地，刷新页面不会丢失")
+
+                # 显示调试信息
+                if st.checkbox("🔍 显示localStorage调试信息", key="debug_checkbox"):
+                    debug_info = debug_localStorage()
+                    st.code(debug_info, language="json")
                 
             if cleared:
                 # 清除session_state

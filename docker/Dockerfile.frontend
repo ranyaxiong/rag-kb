@@ -9,9 +9,12 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装Streamlit和requests
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir streamlit==1.28.1 requests==2.31.0
+# 创建requirements文件以利用Docker缓存
+COPY requirements-frontend.txt .
+
+# 使用国内镜像源加速下载，并安装Python依赖
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip install -r requirements-frontend.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制前端代码
 COPY frontend/ .
