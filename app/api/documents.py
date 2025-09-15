@@ -8,7 +8,9 @@ from typing import List
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 
 from app.core.config import settings
 from app.core.document_processor import DocumentProcessor
@@ -273,6 +275,42 @@ async def get_processing_status(document_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/status/stream/{document_id}")
+async def stream_processing_status(document_id: str):
+    """SSE流式状态推送"""
+    async def event_generator():
+        try:
+            while True:
+                # 复用现有状态查询逻辑
+                status = async_processor.get_task_status(document_id)
+                if not status:
+                    status = job_status.get_job_status(document_id)
+                
+                if status:
+                    yield f"data: {json.dumps(status)}\n\n"
+                    
+                    # 处理完成或失败时结束流
+                    if status.get("status") in ["completed", "failed"]:
+                        break
+                else:
+                    yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
+                    break
+                
+                await asyncio.sleep(1.5)  # 1.5秒轮询间隔
+                
+        except Exception as e:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
 @router.get("/", response_model=List[Document])
 async def list_documents():
     """获取文档列表"""
@@ -517,3 +555,4 @@ async def get_pdf_info(document_id: str):
     except Exception as e:
         logger.error(f"Error getting PDF info for {document_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get PDF info: {str(e)}")
+
