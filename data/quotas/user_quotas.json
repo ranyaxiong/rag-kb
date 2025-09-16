@@ -9,17 +9,17 @@
   },
   "7dd78f7830bbd5d3": {
     "user_id": "7dd78f7830bbd5d3",
-    "used_count": 0,
+    "used_count": 5,
     "daily_limit": 5,
     "last_reset_date": "2025-09-16T00:35:29.399578",
     "first_use_time": "2025-09-12T01:12:20.204909",
-    "last_use_time": "2025-09-15T14:34:34.755632"
+    "last_use_time": "2025-09-16T07:23:50.496708"
   },
   "257b12cb2361d5bf": {
     "user_id": "257b12cb2361d5bf",
-    "used_count": 2,
+    "used_count": 0,
     "daily_limit": 5,
-    "last_reset_date": "2025-09-12T15:00:07.517124",
+    "last_reset_date": "2025-09-16T05:11:10.453872",
     "first_use_time": "2025-09-12T15:00:07.517124",
     "last_use_time": "2025-09-12T15:00:26.906654"
   }

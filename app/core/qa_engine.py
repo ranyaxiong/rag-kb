@@ -42,13 +42,7 @@ class QAEngine:
                 raise ValueError(f"API key not configured for {settings.llm_provider}")
             
             # 2) 获取模型配置并应用覆盖项（不修改全局 settings）
-            model_config = settings.get_model_config()
-            if overrides.get("provider"):
-                model_config["provider"] = overrides["provider"]
-            if overrides.get("api_base_url"):
-                model_config["api_base_url"] = overrides["api_base_url"]
-            if overrides.get("model"):
-                model_config["chat_model"] = overrides["model"]
+            model_config = settings.get_model_config(overrides)
             # 记录生效配置
             self._effective_model_config = dict(model_config)
             
@@ -170,7 +164,7 @@ class QAEngine:
                         "Restricted top candidates: "
                         + ", ".join(
                             [
-                                f"(doc_id={d.metadata.get('document_id')[:8]}, file={d.metadata.get('filename')}, dist={s:.4f})"
+                                (lambda _d,_s: f"(doc_id={{(((_d.metadata.get('document_id'))[:8]) if isinstance(_d.metadata.get('document_id'), str) else 'unknown')}}, file={{_d.metadata.get('filename', 'Unknown')}}, dist={{_s:.4f}})")(_d=d, _s=s)
                                 for d, s in top_r
                             ]
                         )
@@ -181,7 +175,7 @@ class QAEngine:
                         "Global top candidates: "
                         + ", ".join(
                             [
-                                f"(doc_id={d.metadata.get('document_id')[:8]}, file={d.metadata.get('filename')}, dist={s:.4f})"
+                                (lambda _d,_s: f"(doc_id={{(((_d.metadata.get('document_id'))[:8]) if isinstance(_d.metadata.get('document_id'), str) else 'unknown')}}, file={{_d.metadata.get('filename', 'Unknown')}}, dist={{_s:.4f}})")(_d=d, _s=s)
                                 for d, s in top_g
                             ]
                         )
@@ -251,7 +245,7 @@ class QAEngine:
                 logger.info(f"QAEngine.ask using MMR, search_kwargs={mmr_kwargs}")
             
             qa_chain = self._build_qa_chain(retriever=retriever)
-            result = qa_chain({"query": question})
+            result = qa_chain.invoke({"query": question})
             
             # 处理答案
             answer = result.get("result", "抱歉，我无法找到相关信息来回答这个问题。")

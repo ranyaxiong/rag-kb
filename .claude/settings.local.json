@@ -20,7 +20,10 @@
       "Bash(curl:*)",
       "Bash(docker logs:*)",
       "Bash(./venv/Scripts/python.exe:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(venvScripts:*)",
+      "Bash(python:*)",
+      "Bash(./venv/Scripts/pip list)"
     ],
     "deny": [],
     "ask": []

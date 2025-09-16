@@ -159,12 +159,28 @@ class FileUploadComponent:
                     if result.get('processing_mode') == 'async':
                         # 异步处理模式
                         document_id = result.get('document_id')
-                        st.info(f"🔄 文档正在后台处理中... 文档ID: `{document_id}`")
-                        st.info("💡 大型扫描版PDF可能需要几分钟处理，请稍后查看文档列表")
+                        st.info(f"🔄 文档正在后台异步处理中... 文档ID: `{document_id}`")
+                        
+                        # 根据文件大小给出更准确的预估时间
+                        file_size_mb = uploaded_file.size / (1024 * 1024)
+                        if file_size_mb > 10:
+                            st.warning("📋 大型文档处理提示：")
+                            st.write("• 🔍 扫描版PDF需要OCR文字识别，可能需要3-10分钟")
+                            st.write("• 📊 处理进度将实时显示在下方监听区域")
+                            st.write("• ✅ 处理完成后页面将自动刷新以更新文档列表")
+                            st.write("• ⏰ 如果监听超时，请手动刷新页面查看结果")
+                        else:
+                            st.info("💡 小型文档通常在1-2分钟内完成处理")
                         
                         # 提供状态查询按钮
                         if st.button(f"📊 查看 {uploaded_file.name} 处理状态", key=f"status_{document_id}"):
                             self._check_processing_status(document_id, uploaded_file.name)
+                            
+                        # 友好提示
+                        st.info("💡 **等待期间您可以：**")
+                        st.write("• 继续上传其他文档")
+                        st.write("• 查看右侧已有文档列表") 
+                        st.write("• 测试已有文档的问答功能")
                     else:
                         st.info("文档正在后台处理中，请稍候...")
                     
@@ -190,20 +206,40 @@ class FileUploadComponent:
                                         console.log('SSE received:', data);
 
                                         if (status === 'completed') {{
-                                            statusDiv.innerHTML = '✅ 处理完成，正在刷新页面...';
+                                            statusDiv.innerHTML = '✅ 处理完成，正在刷新页面以更新文档列表...';
                                             eventSource.close();
-                                            setTimeout(() => window.parent.location.reload(), 1000);
+                                            // 立即刷新页面以更新文档列表
+                                            setTimeout(() => window.parent.location.reload(), 500);
                                         }} else if (status === 'failed') {{
                                             statusDiv.innerHTML = '❌ 处理失败: ' + (data.error || data.message || '未知错误');
                                             eventSource.close();
                                         }} else if (status === 'processing') {{
                                             const progress = data.progress || 0;
                                             const message = data.message || '';
-                                            statusDiv.innerHTML = `🔄 处理中... ${{progress}}% ${{message}}`;
+                                            const stage = data.stage || '';
+                                            let statusText = '🔄 处理中...';
+                                            
+                                            if (stage.includes('ocr') || stage.includes('OCR')) {{
+                                                statusText = '🔍 OCR文字识别中...';
+                                            }} else if (stage.includes('split') || stage.includes('chunk')) {{
+                                                statusText = '📄 文档分割中...';
+                                            }} else if (stage.includes('embed')) {{
+                                                statusText = '🧠 生成向量嵌入中...';
+                                            }} else if (stage.includes('save')) {{
+                                                statusText = '💾 保存到数据库中...';
+                                            }}
+                                            
+                                            if (progress > 0) {{
+                                                statusText += ` ${{progress}}%`;
+                                            }}
+                                            if (message) {{
+                                                statusText += ` - ${{message}}`;
+                                            }}
+                                            statusDiv.innerHTML = statusText;
                                         }} else if (status === 'waiting') {{
-                                            statusDiv.innerHTML = '⏳ 等待处理开始...';
+                                            statusDiv.innerHTML = '⏳ 等待处理队列中...';
                                         }} else if (status === 'timeout') {{
-                                            statusDiv.innerHTML = '⏰ 监听超时，请手动刷新页面查看结果';
+                                            statusDiv.innerHTML = '⏰ 监听超时，大型文档可能仍在处理中，请稍后手动刷新页面查看结果';
                                             eventSource.close();
                                         }} else if (status === 'error') {{
                                             statusDiv.innerHTML = '❌ 状态查询错误: ' + (data.message || '未知错误');
@@ -221,13 +257,13 @@ class FileUploadComponent:
                                     eventSource.close();
                                 }};
                                 
-                                // 30秒超时保护
+                                // 5分钟超时保护（适应大型扫描版PDF的OCR处理）
                                 setTimeout(() => {{
                                     if (eventSource.readyState !== EventSource.CLOSED) {{
                                         eventSource.close();
-                                        statusDiv.innerHTML = '⏰ 监听超时，请手动刷新';
+                                        statusDiv.innerHTML = '⏰ 监听超时，文档可能仍在处理中，请稍后手动刷新页面查看结果';
                                     }}
-                                }}, 30000);
+                                }}, 300000);
                             }})();
                             </script>
                             """

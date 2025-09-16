@@ -238,14 +238,7 @@ async def verify_key(request: Request):
         if not api_key:
             raise HTTPException(status_code=400, detail="No API key provided. 请在请求头或服务端配置中提供 API Key")
         # 构造模型配置
-        model_cfg = settings.get_model_config()
-        if overrides.get("provider"):
-            model_cfg["provider"] = overrides["provider"]
-        if overrides.get("api_base_url"):
-            model_cfg["api_base_url"] = overrides["api_base_url"]
-        # 模型名可选覆盖
-        if overrides.get("model"):
-            model_cfg["chat_model"] = overrides["model"]
+        model_cfg = settings.get_model_config(overrides)
         # 构建 LLM 客户端并做一次轻量调用
         llm_kwargs = {
             "model": model_cfg["chat_model"],

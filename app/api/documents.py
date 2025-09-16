@@ -281,7 +281,7 @@ async def stream_processing_status(document_id: str):
     async def event_generator():
         try:
             retry_count = 0
-            max_retries = 20  # 最多重试20次（30秒）
+            max_retries = 200  # 最多重试200次（5分钟），适应大型扫描版PDF的OCR处理
 
             while retry_count < max_retries:
                 # 复用现有状态查询逻辑

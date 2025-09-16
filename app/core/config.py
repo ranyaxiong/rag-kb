@@ -202,8 +202,35 @@ class Settings(BaseSettings):
         else:
             return self.get_api_key()
     
-    def get_model_config(self) -> Dict[str, Any]:
-        """获取当前模型配置"""
+    def detect_provider_from_api_key(self, api_key: str) -> str:
+        """根据API Key格式自动检测提供商"""
+        if not api_key:
+            return self.llm_provider
+        
+        api_key = api_key.strip()
+        
+        # Zhipu API keys have the format: xxxxxxxx.xxxxxxxxxxxxxx (32 char hex + . + 16 chars)
+        # Check this first since it has a unique format
+        if "." in api_key and len(api_key.split(".")) == 2:
+            parts = api_key.split(".")
+            if len(parts[0]) == 32 and len(parts[1]) == 16:
+                return "zhipu"
+        
+        # OpenAI API keys start with "sk-" and are longer (51-55 chars typically)
+        if api_key.startswith("sk-") and len(api_key) >= 48:
+            return "openai"
+        
+        # DeepSeek API keys start with "sk-" and are shorter than OpenAI keys
+        if api_key.startswith("sk-") and len(api_key) <= 47:
+            return "deepseek"
+        
+        # Default to current provider if pattern doesn't match
+        return self.llm_provider
+
+    def get_model_config(self, overrides: Optional[dict] = None) -> Dict[str, Any]:
+        """获取当前模型配置，支持按请求覆盖"""
+        overrides = overrides or {}
+        
         config = {
             "provider": self.llm_provider,
             "embedding_provider": self.embedding_provider,
@@ -213,17 +240,47 @@ class Settings(BaseSettings):
             "embedding_api_base_url": self.embedding_api_base_url
         }
         
+        # 应用覆盖项
+        if overrides.get("provider"):
+            config["provider"] = overrides["provider"]
+        if overrides.get("api_base_url"):
+            config["api_base_url"] = overrides["api_base_url"]
+        if overrides.get("model"):
+            config["chat_model"] = overrides["model"]
+            
+        # 如果提供了API key但没有明确指定provider，尝试自动检测
+        auto_detected = False
+        if overrides.get("api_key") and not overrides.get("provider"):
+            detected_provider = self.detect_provider_from_api_key(overrides["api_key"])
+            config["provider"] = detected_provider
+            auto_detected = True
+            if detected_provider != self.llm_provider:
+                logger.info(f"Auto-detected provider '{detected_provider}' based on API key format")
+        
         # 根据不同提供商设置默认值
-        if self.llm_provider == "deepseek":
-            config.setdefault("api_base_url", "https://api.deepseek.com")
-            if self.chat_model == "gpt-3.5-turbo":  # 如果还是默认值
+        # 如果provider被覆盖/自动检测且没有明确指定base_url，则使用provider对应的默认URL
+        provider_changed = (overrides.get("provider") and overrides["provider"] != self.llm_provider) or auto_detected
+        
+        if config["provider"] == "deepseek":
+            # 当provider变更或自动检测为DeepSeek时，如果没有明确指定URL，使用DeepSeek的URL
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://api.deepseek.com"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://api.deepseek.com"
+            if config["chat_model"] == "gpt-3.5-turbo":  # 如果还是默认值
                 config["chat_model"] = "deepseek-chat"
-        elif self.llm_provider == "zhipu":
-            config.setdefault("api_base_url", "https://open.bigmodel.cn/api/paas/v4")
-            if self.chat_model == "gpt-3.5-turbo":
+        elif config["provider"] == "zhipu":
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://open.bigmodel.cn/api/paas/v4"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://open.bigmodel.cn/api/paas/v4"
+            if config["chat_model"] == "gpt-3.5-turbo":
                 config["chat_model"] = "glm-4"
-        elif self.llm_provider == "openai":
-            config.setdefault("api_base_url", "https://api.openai.com/v1")
+        elif config["provider"] == "openai":
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://api.openai.com/v1"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://api.openai.com/v1"
         
         # 嵌入模型配置
         if self.embedding_provider == "zhipu":
