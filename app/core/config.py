@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # CORS配置
     allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"  # 允许的前端域名，逗号分隔
     allowed_methods: str = "GET,POST,DELETE"  # 允许的HTTP方法
-    allowed_headers: str = "Content-Type,Authorization,X-API-Key,X-LLM-Provider,X-LLM-Base-URL,X-LLM-Model"  # 允许的请求头（含BYOK）
+    allowed_headers: str = "Content-Type,Authorization,X-API-Key,X-LLM-Provider,X-LLM-Base-URL,X-LLM-Model,Cache-Control,Connection"  # 允许的请求头（含BYOK和SSE）
     
     # RAG配置
     chunk_size: int = 1000

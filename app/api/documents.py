@@ -280,33 +280,44 @@ async def stream_processing_status(document_id: str):
     """SSE流式状态推送"""
     async def event_generator():
         try:
-            while True:
+            retry_count = 0
+            max_retries = 20  # 最多重试20次（30秒）
+
+            while retry_count < max_retries:
                 # 复用现有状态查询逻辑
                 status = async_processor.get_task_status(document_id)
                 if not status:
                     status = job_status.get_job_status(document_id)
-                
+
                 if status:
                     yield f"data: {json.dumps(status)}\n\n"
-                    
+
                     # 处理完成或失败时结束流
                     if status.get("status") in ["completed", "failed"]:
                         break
                 else:
-                    yield f"data: {json.dumps({'status': 'not_found'})}\n\n"
-                    break
-                
+                    # 如果找不到状态，可能是刚提交还没开始处理，继续等待
+                    yield f"data: {json.dumps({'status': 'waiting', 'message': 'Waiting for processing to start...'})}\n\n"
+
                 await asyncio.sleep(1.5)  # 1.5秒轮询间隔
-                
+                retry_count += 1
+
+            # 超时后发送超时状态
+            if retry_count >= max_retries:
+                yield f"data: {json.dumps({'status': 'timeout', 'message': 'Status check timeout'})}\n\n"
+
         except Exception as e:
+            logger.error(f"SSE stream error for document {document_id}: {str(e)}")
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control",
         }
     )
 

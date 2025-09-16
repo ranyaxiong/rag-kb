@@ -303,6 +303,8 @@ class ChatInterface:
         headers = {}
         try:
             api_key = getattr(st.session_state, 'byok_api_key', '').strip()
+            # 添加调试输出
+            print(f"DEBUG - Chat interface API key: '{api_key}'")
             provider = getattr(st.session_state, 'byok_provider', '').strip()
             base_url = getattr(st.session_state, 'byok_base_url', '').strip()
             model = getattr(st.session_state, 'byok_model', '').strip()

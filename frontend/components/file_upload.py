@@ -8,11 +8,12 @@ from typing import List
 
 class FileUploadComponent:
     """文件上传组件类"""
-    
-    def __init__(self, backend_url: str):
-        self.backend_url = backend_url
+
+    def __init__(self, backend_url: str, client_url: str = None):
+        self.backend_url = backend_url  # 服务器端调用用
+        self.client_url = client_url or backend_url  # 浏览器端调用用
         self.supported_formats = [".pdf", ".docx", ".doc", ".txt", ".md"]
-        
+
         # 初始化上传状态
         if "uploading" not in st.session_state:
             st.session_state.uploading = False
@@ -180,31 +181,43 @@ class FileUploadComponent:
                             <script>
                             (function() {{
                                 const statusDiv = document.getElementById('status-text');
-                                const eventSource = new EventSource('{self.backend_url}/api/documents/status/stream/{document_id}');
+                                const eventSource = new EventSource('{self.client_url}/api/documents/status/stream/{document_id}');
                                 
                                 eventSource.onmessage = function(event) {{
                                     try {{
                                         const data = JSON.parse(event.data);
                                         const status = data.status;
-                                        
+                                        console.log('SSE received:', data);
+
                                         if (status === 'completed') {{
                                             statusDiv.innerHTML = '✅ 处理完成，正在刷新页面...';
                                             eventSource.close();
                                             setTimeout(() => window.parent.location.reload(), 1000);
                                         }} else if (status === 'failed') {{
-                                            statusDiv.innerHTML = '❌ 处理失败: ' + (data.error || '未知错误');
+                                            statusDiv.innerHTML = '❌ 处理失败: ' + (data.error || data.message || '未知错误');
                                             eventSource.close();
                                         }} else if (status === 'processing') {{
                                             const progress = data.progress || 0;
-                                            statusDiv.innerHTML = `🔄 处理中... ${{progress}}%`;
+                                            const message = data.message || '';
+                                            statusDiv.innerHTML = `🔄 处理中... ${{progress}}% ${{message}}`;
+                                        }} else if (status === 'waiting') {{
+                                            statusDiv.innerHTML = '⏳ 等待处理开始...';
+                                        }} else if (status === 'timeout') {{
+                                            statusDiv.innerHTML = '⏰ 监听超时，请手动刷新页面查看结果';
+                                            eventSource.close();
+                                        }} else if (status === 'error') {{
+                                            statusDiv.innerHTML = '❌ 状态查询错误: ' + (data.message || '未知错误');
+                                            eventSource.close();
                                         }}
                                     }} catch (e) {{
                                         console.error('SSE解析错误:', e);
+                                        statusDiv.innerHTML = '❌ 数据解析错误';
                                     }}
                                 }};
                                 
-                                eventSource.onerror = function() {{
-                                    statusDiv.innerHTML = '⚠️ 连接中断';
+                                eventSource.onerror = function(error) {{
+                                    console.error('SSE连接错误:', error);
+                                    statusDiv.innerHTML = '⚠️ 连接中断，请手动刷新页面查看结果';
                                     eventSource.close();
                                 }};
                                 
