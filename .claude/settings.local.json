@@ -23,7 +23,8 @@
       "Bash(cp:*)",
       "Bash(venvScripts:*)",
       "Bash(python:*)",
-      "Bash(./venv/Scripts/pip list)"
+      "Bash(./venv/Scripts/pip list)",
+      "Bash(BACKEND_URL=http://localhost:8000 ../venv/Scripts/python.exe -m streamlit run streamlit_app.py --server.port 8501)"
     ],
     "deny": [],
     "ask": []

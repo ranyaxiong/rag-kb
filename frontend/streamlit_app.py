@@ -298,34 +298,41 @@ def save_user_settings():
 
 
 def clear_user_settings():
-    """清除用户设置"""
+    """清除用户设置（覆盖 top 与当前上下文的 localStorage）"""
     if JS_EVAL_AVAILABLE:
         try:
-            # 一次性清除所有设置
+            import time
+            from streamlit_js_eval import streamlit_js_eval
             js_code = """
-            localStorage.removeItem('rag_byok_api_key');
-            localStorage.removeItem('rag_byok_provider');
-            localStorage.removeItem('rag_byok_base_url');
-            localStorage.removeItem('rag_byok_model');
-            console.log('All settings cleared from localStorage');
+            (function(){
+              try{
+                const getLS = () => { try { return (window.top && window.top.localStorage) ? window.top.localStorage : localStorage; } catch(e) { return localStorage; } };
+                const ls = getLS();
+                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ ls.removeItem(k); }catch(_){} });
+                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
+                console.log('All BYOK settings cleared');
+              }catch(e){ console.error('clear error', e); }
+            })();
             """
-
             streamlit_js_eval(
                 js_expressions=js_code,
-                key="clear_all_settings",
+                key=f"clear_all_settings_{int(time.time()*1000)}",
                 want_output=False
             )
         except Exception as e:
             logger.warning(f"清除设置时出错: {e}")
     else:
-        # 备用方案
         clear_js = """
         <script>
-        localStorage.removeItem('rag_byok_api_key');
-        localStorage.removeItem('rag_byok_provider');
-        localStorage.removeItem('rag_byok_base_url');
-        localStorage.removeItem('rag_byok_model');
-        console.log('Settings cleared from localStorage');
+        (function(){
+          try{
+            ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
+            if (window.top && window.top!==window && window.top.localStorage){
+              ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ window.top.localStorage.removeItem(k); }catch(_){} });
+            }
+            console.log('BYOK settings cleared (fallback)');
+          }catch(e){ console.error('fallback clear error', e); }
+        })();
         </script>
         """
         st.components.v1.html(clear_js, height=0, width=0)
@@ -396,7 +403,8 @@ def main():
                     return (json.loads(v) if isinstance(v, str) else v) or default
                 except Exception:
                     return v or default
-            if not st.session_state.get('byok_api_key'):
+            # 仅当当前会话没有key，且本轮不是“跳过恢复/刚清除”时，才进行兜底恢复
+            if (not st.session_state.get('byok_api_key')) and (not st.session_state.get('skip_restore_once')) and (not st.session_state.get('just_cleared')):
                 st.session_state.byok_api_key = (_unquote(_parsed.get('api_key'), "")).strip()
                 st.session_state.byok_provider = (_unquote(_parsed.get('provider'), 'openai')).strip()
                 st.session_state.byok_base_url = (_unquote(_parsed.get('base_url'), "")).strip()
@@ -478,6 +486,7 @@ Session State Values:
 
 
             if cleared:
+
                 # 清除session_state
                 st.session_state.byok_api_key = ""
                 st.session_state.byok_provider = "openai"
@@ -486,10 +495,10 @@ Session State Values:
 
                 # 清除localStorage
                 clear_user_settings()
-                # 标记设置已清除，使用当前session_state的默认值
+                # 标记设置已清除，使用当前session_state的默认值，并避免本轮/下一轮恢复
                 st.session_state.settings_just_saved = True
+                st.session_state.just_cleared = True
                 st.success("🗑️ 设置已清除")
-                st.rerun()
 
         st.markdown("---")
 
@@ -502,6 +511,26 @@ Session State Values:
         st.markdown("---")
 
         # 文档统计
+        #
+        #     
+        #     
+        #     
+        #     
+        #     
+        #     
+        #     
+        #     
+        # Session State  
+        st.code(f"""
+Session State Values (after form):
+- byok_api_key: {bool(st.session_state.get('byok_api_key', ''))}
+- byok_provider: {st.session_state.get('byok_provider', 'N/A')}
+- byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
+- byok_model: {st.session_state.get('byok_model', 'N/A')}
+- settings_loaded: {st.session_state.get('settings_loaded', False)}
+- settings_just_saved: {st.session_state.get('settings_just_saved', False)}
+        """)
+
         st.subheader("📊 统计信息")
         try:
             stats_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview")
@@ -520,15 +549,29 @@ Session State Values:
             if st.session_state.get("settings_restoring"):
                 st.info("正在从浏览器恢复设置…")
             else:
-                headers = {}
+                # 有自定义Key：直接提示无限制
                 if st.session_state.get("byok_api_key"):
-                    headers["Authorization"] = f"Bearer {st.session_state.byok_api_key}"
-                    # ... 其余 X-LLM-* 头
-
-                quota_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/qa/quota", headers=headers)
-                if quota_response.status_code == 200:
-                    quota_info = quota_response.json()
-                    # ... 这里保留你原有的展示逻辑
+                    st.success("🔑 使用自定义 API Key - 不受试用配额限制")
+                else:
+                    # 无自定义Key：查询后端配额
+                    quota_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/qa/quota")
+                    if quota_response.status_code == 200:
+                        qi = quota_response.json()
+                        if not qi.get("quota_enabled", True):
+                            st.info("当前未启用配额限制")
+                        else:
+                            if qi.get("has_custom_key"):
+                                st.success("🔑 使用自定义 API Key - 不受试用配额限制")
+                            else:
+                                used = qi.get("used_count", 0)
+                                limit = qi.get("daily_limit", 0)
+                                remaining = qi.get("remaining", 0)
+                                msg = qi.get("message")
+                                st.write(f"今日已用：{used} / 限额：{limit}，剩余：{remaining}")
+                                if msg:
+                                    st.caption(msg)
+                    else:
+                        st.info("无法获取配额信息")
         except Exception as e:
             st.warning(f"配额信息获取错误: {str(e)}")
 
