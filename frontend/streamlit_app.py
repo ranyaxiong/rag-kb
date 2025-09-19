@@ -61,6 +61,25 @@ st.set_page_config(
 BACKEND_URL_INTERNAL = os.getenv("BACKEND_URL", "http://localhost:8000")  # 服务器端调用
 BACKEND_URL_CLIENT = os.getenv("BACKEND_URL_CLIENT", "http://localhost:8000")  # 浏览器端调用
 
+def build_byok_headers() -> dict:
+    """根据当前会话中的 BYOK 设置构造请求头"""
+    headers = {}
+    api_key = st.session_state.get('byok_api_key', '').strip()
+    provider = st.session_state.get('byok_provider', '').strip()
+    base_url = st.session_state.get('byok_base_url', '').strip()
+    model = st.session_state.get('byok_model', '').strip()
+
+    if api_key:
+        headers['Authorization'] = f"Bearer {api_key}"
+    if provider:
+        headers['X-LLM-Provider'] = provider
+    if base_url:
+        headers['X-LLM-Base-URL'] = base_url
+    if model:
+        headers['X-LLM-Model'] = model
+
+    return headers
+
 def check_backend_connection():
     """检查后端连接"""
     try:
@@ -114,10 +133,83 @@ def load_with_html_fallback():
     # 显示HTML组件
     st.components.v1.html(html_code, height=0, width=0)
 
+def _normalize_local_storage_value(value: str, default: str = "") -> str:
+    """尽可能把localStorage中的值解析为纯文本"""
+    if value is None:
+        return default
+
+    # localStorage 返回的可能是 JSON 字符串或裸字符串
+    cleaned = value
+    try:
+        cleaned = json.loads(cleaned)
+    except Exception:
+        pass
+
+    # 早期版本可能出现双重 JSON 编码，这里再尝试一次
+    if isinstance(cleaned, str):
+        stripped = cleaned.strip()
+        if stripped and stripped[0] in ('"', "'") and stripped[-1] == stripped[0]:
+            try:
+                cleaned = json.loads(cleaned)
+            except Exception:
+                cleaned = stripped.strip('"')
+
+    if isinstance(cleaned, str):
+        return cleaned.strip()
+
+    # 其他类型（如 null/None）统一落到默认值
+    return default
+
+
+def _read_browser_settings() -> dict | None:
+    """尝试通过JS一次性读取localStorage中的BYOK设置"""
+    if not JS_EVAL_AVAILABLE:
+        return None
+
+    try:
+        from streamlit_js_eval import streamlit_js_eval
+
+        payload = streamlit_js_eval(
+            """
+            (function(){
+              try {
+                const getLS = () => {
+                  try { return (window.top && window.top.localStorage) ? window.top.localStorage : localStorage; }
+                  catch(e) { return localStorage; }
+                };
+                const ls = getLS();
+                const result = {
+                  api_key_raw: ls.getItem('rag_byok_api_key'),
+                  provider_raw: ls.getItem('rag_byok_provider'),
+                  base_url_raw: ls.getItem('rag_byok_base_url'),
+                  model_raw: ls.getItem('rag_byok_model'),
+                  last_saved_raw: ls.getItem('rag_byok_last_saved')
+                };
+                return JSON.stringify(result);
+              } catch(e) {
+                return '';
+              }
+            })()
+            """,
+            key="ls_bulk_read",
+            want_output=True
+        )
+    except Exception as exc:  # pragma: no cover - 针对浏览器端异常
+        logger.warning(f"Failed to read BYOK settings via JS eval: {exc}")
+        return None
+
+    if not payload or not isinstance(payload, str):
+        return None
+
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
 def load_user_settings():
     """从浏览器localStorage加载用户设置"""
 
-    # 初始化默认设置
     defaults = {
         "byok_api_key": "",
         "byok_provider": "openai",
@@ -125,133 +217,115 @@ def load_user_settings():
         "byok_model": "gpt-3.5-turbo"
     }
 
-    # 从session_state或默认值初始化
+    # 初始化会话默认值
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-    # 如果按钮提交即将发生或刚发生，跳过本轮恢复，避免打断提交事件
-    skip_restore = st.session_state.pop('skip_restore_once', False)
-
-    # 仅当当前会话中还没有 key 且未跳过时，才从 localStorage 恢复（避免覆盖用户正在表单里输入的值）
-    should_load = (not skip_restore) and (not bool(st.session_state.get('byok_api_key')))
-
-    if should_load:
-        # 使用更稳健的读取方案：直接在当前上下文读取 localStorage
-        # 注意：不再尝试顶层跳转，且不做自动重试的 st.rerun，以免打断按钮提交事件
-
-        # 先尝试从 URL 查询参数恢复（如果是第二次渲染）
-        try:
-            try:
-                query_params = dict(st.query_params)
-                clear_params = lambda: st.query_params.clear()
-            except AttributeError:
-                query_params = st.experimental_get_query_params()
-                clear_params = lambda: st.experimental_set_query_params()
-
-            if 'restored' in query_params and (
-                query_params['restored'] == '1' or (isinstance(query_params['restored'], list) and query_params['restored'][0] == '1')
-            ):
-                import base64
-                api_key_param = query_params.get('api_key')
-                provider_param = query_params.get('provider', 'openai')
-                base_url_param = query_params.get('base_url', '')
-                model_param = query_params.get('model', 'gpt-3.5-turbo')
-
-                api_key = ''
-                if api_key_param:
-                    api_key_encoded = api_key_param if isinstance(api_key_param, str) else api_key_param[0]
-                    api_key = base64.b64decode(api_key_encoded).decode('utf-8')
-
-                provider = provider_param if isinstance(provider_param, str) else provider_param[0]
-                base_url = ''
-                if base_url_param:
-                    base_url_encoded = base_url_param if isinstance(base_url_param, str) else base_url_param[0]
-                    base_url = base64.b64decode(base_url_encoded).decode('utf-8') if base_url_encoded else ''
-
-                model = model_param if isinstance(model_param, str) else model_param[0]
-
-                # 写回 session_state
-                st.session_state.byok_api_key = (api_key or '').strip()
-                st.session_state.byok_provider = (provider or 'openai').strip()
-                st.session_state.byok_base_url = (base_url or '').strip()
-                st.session_state.byok_model = (model or 'gpt-3.5-turbo').strip()
-
-                # 标记恢复完成
-                st.session_state.settings_loaded = True
-                st.session_state.settings_restoring = False
-                st.session_state.settings_ready = True
-
-                logger.info(f"Settings restored from URL: provider={provider}, api_key_exists={bool(api_key)}")
-
-                # 清除 URL 参数，避免污染后续
-                clear_params()
-                # 完成 URL 恢复后，直接返回（不再执行注入）
-                return
-        except Exception as e:
-            logger.warning(f"URL param restore failed: {e}")
-
-        # 直接通过 js-eval 读取 localStorage（避免跨 iframe 通信问题）
-        try:
-            from streamlit_js_eval import streamlit_js_eval
-            raw = streamlit_js_eval(
-                """
-                (function(){
-                  try{
-                    const getLS = () => { try { return (window.top && window.top.localStorage) ? window.top.localStorage : localStorage; } catch(e) { return localStorage; } };
-                    const ls = getLS();
-                    const read = k => { const v = ls.getItem(k); try { return JSON.parse(v); } catch(e) { return v || ''; } };
-                    const payload = {
-                      api_key: read('rag_byok_api_key') || '',
-                      provider: read('rag_byok_provider') || 'openai',
-                      base_url: read('rag_byok_base_url') || '',
-                      model: read('rag_byok_model') || 'gpt-3.5-turbo'
-                    };
-                    return JSON.stringify(payload);
-                  }catch(e){ return ''; }
-                })()
-                """,
-                key="ls_direct_read",
-                want_output=True
-            )
-        except Exception:
-            raw = ""
-
-        # 注意：即使 raw 为空，也继续向下走，使用默认值并结束恢复态，避免卡死在“恢复中”
-
-        # 解析并写回 session_state
-        try:
-            data = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        except Exception:
-            data = {}
-        api_key = (data.get("api_key") or data.get("apiKey") or "").strip()
-        provider = (data.get("provider") or "openai").strip()
-        base_url = (data.get("base_url") or data.get("baseUrl") or "").strip()
-        model = (data.get("model") or "gpt-3.5-turbo").strip()
-
-        # 即便读取到默认值，也不在此触发 rerun，避免打断后续的表单提交流程
-        # 恢复将通过后续的调试读取（已能拿到值）来兜底一次写回
-        is_default_payload = (
-            (api_key == "") and (provider == "openai") and (base_url == "") and (model == "gpt-3.5-turbo")
-        )
-        # 仅记录日志，继续向下写回，后面还有兜底
-        if is_default_payload:
-            logger.info("Settings read default payload in load_user_settings; will try fallback after debug read")
-
-        # 写回（无论是否为默认，都要落地，避免卡住）
-        st.session_state.byok_api_key = api_key
-        st.session_state.byok_provider = provider
-        st.session_state.byok_base_url = base_url
-        st.session_state.byok_model = model
-
-        st.session_state.settings_loaded = True
+    if "settings_loaded" not in st.session_state:
+        st.session_state.settings_loaded = False
+    if "settings_restoring" not in st.session_state:
         st.session_state.settings_restoring = False
-        st.session_state.settings_ready = True
+    if "settings_retry_count" not in st.session_state:
         st.session_state.settings_retry_count = 0
 
-        logger.info(
-            f"Settings restored via direct read: provider={provider}, api_key_exists={bool(api_key)}"
-        )
+    skip_restore = st.session_state.pop('skip_restore_once', False)
+
+    if st.session_state.settings_loaded or skip_restore:
+        return
+
+    # 先标记正在恢复，避免提问流程提前启动
+    st.session_state.settings_restoring = True
+
+    # 优先尝试通过 URL 参数恢复（兼容历史传参方案）
+    try:
+        try:
+            query_params = dict(st.query_params)
+            clear_params = lambda: st.query_params.clear()
+        except AttributeError:
+            query_params = st.experimental_get_query_params()
+            clear_params = lambda: st.experimental_set_query_params()
+
+        restored_flag = query_params.get('restored')
+        if restored_flag == '1' or (
+            isinstance(restored_flag, list) and restored_flag and restored_flag[0] == '1'
+        ):
+            import base64
+
+            api_key_param = query_params.get('api_key')
+            provider_param = query_params.get('provider', 'openai')
+            base_url_param = query_params.get('base_url', '')
+            model_param = query_params.get('model', 'gpt-3.5-turbo')
+
+            def _decode_param(value, fallback=""):
+                if not value:
+                    return fallback
+                raw_value = value if isinstance(value, str) else value[0]
+                if not raw_value:
+                    return fallback
+                try:
+                    return base64.b64decode(raw_value).decode('utf-8') or fallback
+                except Exception:
+                    return raw_value or fallback
+
+            api_key = _decode_param(api_key_param)
+            provider = provider_param if isinstance(provider_param, str) else provider_param[0]
+            base_url = _decode_param(base_url_param)
+            model = model_param if isinstance(model_param, str) else model_param[0]
+
+            st.session_state.byok_api_key = api_key.strip()
+            st.session_state.byok_provider = (provider or 'openai').strip()
+            st.session_state.byok_base_url = base_url.strip()
+            st.session_state.byok_model = (model or 'gpt-3.5-turbo').strip()
+
+            st.session_state.settings_loaded = True
+            st.session_state.settings_restoring = False
+            st.session_state.settings_retry_count = 0
+
+            logger.info(
+                "BYOK settings restored from query params: provider=%s, api_key_exists=%s",
+                st.session_state.byok_provider,
+                bool(api_key)
+            )
+
+            clear_params()
+            return
+    except Exception as exc:
+        logger.warning(f"URL param restore failed: {exc}")
+
+    # 通过 JS 直接读取浏览器存储
+    raw_data = _read_browser_settings()
+
+    # 如果 JS 读取失败，再尝试 HTML 兜底方式
+    if raw_data is None:
+        load_with_html_fallback()
+        if st.session_state.settings_retry_count < 3:
+            st.session_state.settings_retry_count += 1
+            st.rerun()
+        st.session_state.settings_loaded = True
+        st.session_state.settings_restoring = False
+        return
+
+    # 解析并规范化各个字段
+    api_key = _normalize_local_storage_value(raw_data.get("api_key_raw"))
+    provider = _normalize_local_storage_value(raw_data.get("provider_raw"), "openai") or "openai"
+    base_url = _normalize_local_storage_value(raw_data.get("base_url_raw"))
+    model = _normalize_local_storage_value(raw_data.get("model_raw"), "gpt-3.5-turbo") or "gpt-3.5-turbo"
+
+    st.session_state.byok_api_key = api_key
+    st.session_state.byok_provider = provider
+    st.session_state.byok_base_url = base_url
+    st.session_state.byok_model = model
+
+    st.session_state.settings_loaded = True
+    st.session_state.settings_restoring = False
+    st.session_state.settings_retry_count = 0
+
+    logger.info(
+        "BYOK settings loaded from browser: provider=%s, api_key_exists=%s",
+        provider,
+        bool(api_key)
+    )
 
 def save_user_settings():
     """保存用户设置到浏览器localStorage"""
@@ -260,41 +334,52 @@ def save_user_settings():
     base_url = st.session_state.get('byok_base_url', '')
     model = st.session_state.get('byok_model', 'gpt-3.5-turbo')
 
+    timestamp = datetime.utcnow().isoformat()
+
+    js_template = """
+    localStorage.setItem('rag_byok_api_key', {api_key});
+    localStorage.setItem('rag_byok_provider', {provider});
+    localStorage.setItem('rag_byok_base_url', {base_url});
+    localStorage.setItem('rag_byok_model', {model});
+    localStorage.setItem('rag_byok_last_saved', {timestamp});
+    """
+
+    js_expr = js_template.format(
+        api_key=json.dumps(api_key),
+        provider=json.dumps(provider),
+        base_url=json.dumps(base_url),
+        model=json.dumps(model),
+        timestamp=json.dumps(timestamp)
+    )
+
     if JS_EVAL_AVAILABLE:
         try:
             streamlit_js_eval(
-                js_expressions=f"""
-                localStorage.setItem('rag_byok_api_key', JSON.stringify({json.dumps(api_key)}));
-                localStorage.setItem('rag_byok_provider', JSON.stringify({json.dumps(provider)}));
-                localStorage.setItem('rag_byok_base_url', JSON.stringify({json.dumps(base_url)}));
-                localStorage.setItem('rag_byok_model', JSON.stringify({json.dumps(model)}));
-                """,
+                js_expressions=js_expr,
                 key="save_ls_byok",
                 want_output=False
             )
-            logger.info(f"JS-eval save initiated: API key={{bool({json.dumps(api_key)})}}, provider={provider}")
+            logger.info("BYOK settings saved via JS eval: provider=%s, api_key_exists=%s", provider, bool(api_key))
             return
-        except Exception as e:
-            logger.warning(f"JS-eval save failed, fallback to HTML: {e}")
+        except Exception as exc:
+            logger.warning(f"JS-eval save failed, fallback to HTML: {exc}")
 
-    # 备用：使用 HTML 注入方式
-    js_code = f"""
-    <script>
-    (function() {{
-        try {{
-            localStorage.setItem('rag_byok_api_key', JSON.stringify({json.dumps(api_key)}));
-            localStorage.setItem('rag_byok_provider', JSON.stringify({json.dumps(provider)}));
-            localStorage.setItem('rag_byok_base_url', JSON.stringify({json.dumps(base_url)}));
-            localStorage.setItem('rag_byok_model', JSON.stringify({json.dumps(model)}));
-        }} catch (e) {{
-            console.error('Failed to save to localStorage:', e);
-        }}
-    }})();
-    </script>
-    """
-
-    st.components.v1.html(js_code, height=0, width=0)
-    logger.info(f"HTML save initiated (fallback): API key={bool(api_key)}, provider={provider}")
+    st.components.v1.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                {js_expr}
+            }} catch (e) {{
+                console.error('Failed to save BYOK settings:', e);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0
+    )
+    logger.info("BYOK settings saved via HTML fallback: provider=%s, api_key_exists=%s", provider, bool(api_key))
 
 
 def clear_user_settings():
@@ -308,8 +393,8 @@ def clear_user_settings():
               try{
                 const getLS = () => { try { return (window.top && window.top.localStorage) ? window.top.localStorage : localStorage; } catch(e) { return localStorage; } };
                 const ls = getLS();
-                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ ls.removeItem(k); }catch(_){} });
-                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
+                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model','rag_byok_last_saved'].forEach(k=>{ try{ ls.removeItem(k); }catch(_){} });
+                ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model','rag_byok_last_saved'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
                 console.log('All BYOK settings cleared');
               }catch(e){ console.error('clear error', e); }
             })();
@@ -326,9 +411,9 @@ def clear_user_settings():
         <script>
         (function(){
           try{
-            ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
+            ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model','rag_byok_last_saved'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(_){} });
             if (window.top && window.top!==window && window.top.localStorage){
-              ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model'].forEach(k=>{ try{ window.top.localStorage.removeItem(k); }catch(_){} });
+              ['rag_byok_api_key','rag_byok_provider','rag_byok_base_url','rag_byok_model','rag_byok_last_saved'].forEach(k=>{ try{ window.top.localStorage.removeItem(k); }catch(_){} });
             }
             console.log('BYOK settings cleared (fallback)');
           }catch(e){ console.error('fallback clear error', e); }
@@ -349,6 +434,7 @@ def debug_localStorage():
                     provider: localStorage.getItem('rag_byok_provider'),
                     base_url: localStorage.getItem('rag_byok_base_url'),
                     model: localStorage.getItem('rag_byok_model'),
+                    last_saved: localStorage.getItem('rag_byok_last_saved'),
                     all_keys: Object.keys(localStorage).filter(k => k.startsWith('rag_'))
                 })
                 """,
@@ -554,7 +640,10 @@ Session State Values (after form):
                     st.success("🔑 使用自定义 API Key - 不受试用配额限制")
                 else:
                     # 无自定义Key：查询后端配额
-                    quota_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/qa/quota")
+                    quota_response = requests.get(
+                        f"{BACKEND_URL_INTERNAL}/api/qa/quota",
+                        headers=build_byok_headers()
+                    )
                     if quota_response.status_code == 200:
                         qi = quota_response.json()
                         if not qi.get("quota_enabled", True):
@@ -641,9 +730,3 @@ Session State Values (after form):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
