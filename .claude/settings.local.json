@@ -24,7 +24,10 @@
       "Bash(venvScripts:*)",
       "Bash(python:*)",
       "Bash(./venv/Scripts/pip list)",
-      "Bash(BACKEND_URL=http://localhost:8000 ../venv/Scripts/python.exe -m streamlit run streamlit_app.py --server.port 8501)"
+      "Bash(BACKEND_URL=http://localhost:8000 ../venv/Scripts/python.exe -m streamlit run streamlit_app.py --server.port 8501)",
+      "Bash(timeout 10 curl -s http://localhost:8000/health)",
+      "Bash(timeout:*)",
+      "Bash(../venv/Scripts/python.exe:*)"
     ],
     "deny": [],
     "ask": []
