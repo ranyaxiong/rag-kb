@@ -1,18 +1,23 @@
 """
-文件上传组件
+文件上传组件 - 支持实时更新
 """
 import streamlit as st
 import requests
 from typing import List
+from utils.state_manager import StateManager, AutoRefreshMixin
 
 
-class FileUploadComponent:
-    """文件上传组件类"""
+class FileUploadComponent(AutoRefreshMixin):
+    """文件上传组件类 - 支持实时更新"""
 
     def __init__(self, backend_url: str, client_url: str = None):
+        super().__init__("file_upload", cache_duration=10)  # 10秒缓存
         self.backend_url = backend_url  # 服务器端调用用
         self.client_url = client_url or backend_url  # 浏览器端调用用
         self.supported_formats = [".pdf", ".docx", ".doc", ".txt", ".md"]
+
+        # 初始化状态管理
+        StateManager.init_state()
 
         # 初始化上传状态
         if "uploading" not in st.session_state:
@@ -160,17 +165,20 @@ class FileUploadComponent:
                         # 异步处理模式
                         document_id = result.get('document_id')
                         st.info(f"🔄 文档正在后台异步处理中... 文档ID: `{document_id}`")
-                        
+
+                        # 添加到处理队列
+                        StateManager.add_processing_document(document_id)
+
                         # 根据文件大小给出更准确的预估时间
                         file_size_mb = uploaded_file.size / (1024 * 1024)
                         if file_size_mb > 10:
                             st.warning("📋 大型文档处理提示：")
                             st.write("• 🔍 扫描版PDF需要OCR文字识别，可能需要3-10分钟")
                             st.write("• 📊 处理进度将实时显示在下方监听区域")
-                            st.write("• ✅ 处理完成后页面将自动刷新以更新文档列表")
-                            st.write("• ⏰ 如果监听超时，请手动刷新页面查看结果")
+                            st.write("• ✅ 处理完成后会自动更新文档列表和统计信息")
+                            st.write("• ⏰ 如果监听超时，请使用右侧刷新按钮查看结果")
                         else:
-                            st.info("💡 小型文档通常在1-2分钟内完成处理")
+                            st.info("💡 小型文档通常在1-2分钟内完成处理，完成后会自动更新列表")
                         
                         # 提供状态查询按钮
                         if st.button(f"📊 查看 {uploaded_file.name} 处理状态", key=f"status_{document_id}"):
@@ -189,85 +197,13 @@ class FileUploadComponent:
                         st.code(f"文档ID: {result['document_id']}")
                         document_id = result.get('document_id')
                         if document_id:
-                            # 注入 SSE 客户端
-                            sse_html = f"""
-                            <div id="sse-status-{document_id}" style="margin: 10px 0;">
-                                <div id="status-text">🔄 正在监听处理状态...</div>
-                            </div>
-                            <script>
-                            (function() {{
-                                const statusDiv = document.getElementById('status-text');
-                                const eventSource = new EventSource('{self.client_url}/api/documents/status/stream/{document_id}');
-                                
-                                eventSource.onmessage = function(event) {{
-                                    try {{
-                                        const data = JSON.parse(event.data);
-                                        const status = data.status;
-                                        console.log('SSE received:', data);
+                            # 获取用户选择的刷新模式
+                            refresh_mode = st.session_state.get('refresh_mode', '手动刷新（默认）')
 
-                                        if (status === 'completed') {{
-                                            statusDiv.innerHTML = '✅ 处理完成，正在刷新页面以更新文档列表...';
-                                            eventSource.close();
-                                            // 立即刷新页面以更新文档列表
-                                            setTimeout(() => window.parent.location.reload(), 500);
-                                        }} else if (status === 'failed') {{
-                                            statusDiv.innerHTML = '❌ 处理失败: ' + (data.error || data.message || '未知错误');
-                                            eventSource.close();
-                                        }} else if (status === 'processing') {{
-                                            const progress = data.progress || 0;
-                                            const message = data.message || '';
-                                            const stage = data.stage || '';
-                                            let statusText = '🔄 处理中...';
-                                            
-                                            if (stage.includes('ocr') || stage.includes('OCR')) {{
-                                                statusText = '🔍 OCR文字识别中...';
-                                            }} else if (stage.includes('split') || stage.includes('chunk')) {{
-                                                statusText = '📄 文档分割中...';
-                                            }} else if (stage.includes('embed')) {{
-                                                statusText = '🧠 生成向量嵌入中...';
-                                            }} else if (stage.includes('save')) {{
-                                                statusText = '💾 保存到数据库中...';
-                                            }}
-                                            
-                                            if (progress > 0) {{
-                                                statusText += ` ${{progress}}%`;
-                                            }}
-                                            if (message) {{
-                                                statusText += ` - ${{message}}`;
-                                            }}
-                                            statusDiv.innerHTML = statusText;
-                                        }} else if (status === 'waiting') {{
-                                            statusDiv.innerHTML = '⏳ 等待处理队列中...';
-                                        }} else if (status === 'timeout') {{
-                                            statusDiv.innerHTML = '⏰ 监听超时，大型文档可能仍在处理中，请稍后手动刷新页面查看结果';
-                                            eventSource.close();
-                                        }} else if (status === 'error') {{
-                                            statusDiv.innerHTML = '❌ 状态查询错误: ' + (data.message || '未知错误');
-                                            eventSource.close();
-                                        }}
-                                    }} catch (e) {{
-                                        console.error('SSE解析错误:', e);
-                                        statusDiv.innerHTML = '❌ 数据解析错误';
-                                    }}
-                                }};
-                                
-                                eventSource.onerror = function(error) {{
-                                    console.error('SSE连接错误:', error);
-                                    statusDiv.innerHTML = '⚠️ 连接中断，请手动刷新页面查看结果';
-                                    eventSource.close();
-                                }};
-                                
-                                // 5分钟超时保护（适应大型扫描版PDF的OCR处理）
-                                setTimeout(() => {{
-                                    if (eventSource.readyState !== EventSource.CLOSED) {{
-                                        eventSource.close();
-                                        statusDiv.innerHTML = '⏰ 监听超时，文档可能仍在处理中，请稍后手动刷新页面查看结果';
-                                    }}
-                                }}, 300000);
-                            }})();
-                            </script>
-                            """
-                            st.components.v1.html(sse_html, height=60)
+                            # 使用最终简化的刷新方案
+                            from utils.final_refresh import create_simple_auto_refresh_html
+                            refresh_html = create_simple_auto_refresh_html(document_id, self.client_url, refresh_mode)
+                            st.components.v1.html(refresh_html, height=80)
                     if result.get('filename'):
                         st.code(f"文件名: {result['filename']}")
                 elif response.status_code == 409:

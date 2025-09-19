@@ -1,21 +1,26 @@
 """
-文档管理组件
+文档管理组件 - 支持动态刷新
 负责文档上传、统计信息显示和配额信息展示
 """
 import streamlit as st
 import requests
 import logging
 from typing import Dict, Any
+from utils.state_manager import StateManager, AutoRefreshMixin
 
 logger = logging.getLogger(__name__)
 
 
-class DocumentManagerComponent:
-    """文档管理组件类"""
+class DocumentManagerComponent(AutoRefreshMixin):
+    """文档管理组件类 - 支持动态刷新"""
 
     def __init__(self, backend_url_internal: str, backend_url_client: str):
+        super().__init__("stats", cache_duration=30)  # 30秒缓存
         self.backend_url_internal = backend_url_internal
         self.backend_url_client = backend_url_client
+
+        # 初始化状态管理
+        StateManager.init_state()
 
     def render(self):
         """渲染文档管理组件"""
@@ -40,22 +45,49 @@ class DocumentManagerComponent:
         file_upload_component.render()
 
     def _render_statistics(self):
-        """渲染统计信息"""
-        st.subheader("📊 统计信息")
-        try:
-            stats_response = requests.get(f"{self.backend_url_internal}/api/documents/stats/overview")
-            if stats_response.status_code == 200:
-                stats = stats_response.json()
+        """渲染统计信息 - 支持缓存和动态刷新"""
+        col1, col2, col3 = st.columns([2, 1, 1])
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("总文档数", stats.get("total_documents", 0))
-                with col2:
-                    st.metric("总块数", stats.get("total_chunks", 0))
-            else:
-                st.error("获取统计信息失败")
-        except Exception as e:
-            st.error(f"统计信息获取错误: {str(e)}")
+        with col1:
+            st.subheader("📊 统计信息")
+
+        with col3:
+            # 手动刷新按钮
+            if st.button("🔄", help="刷新统计信息", key="refresh_stats"):
+                self.trigger_refresh()
+                st.rerun()
+
+        # 检查是否需要刷新数据
+        stats = None
+        if self.should_refresh_data():
+            try:
+                stats_response = requests.get(f"{self.backend_url_internal}/api/documents/stats/overview")
+                if stats_response.status_code == 200:
+                    stats = stats_response.json()
+                    self.set_cached_data(stats)
+                else:
+                    st.error("获取统计信息失败")
+                    return
+            except Exception as e:
+                st.error(f"统计信息获取错误: {str(e)}")
+                return
+        else:
+            # 使用缓存数据
+            stats = self.get_cached_data()
+
+        if stats:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("总文档数", stats.get("total_documents", 0))
+            with col2:
+                st.metric("总块数", stats.get("total_chunks", 0))
+
+            # 显示处理中的文档数量
+            processing_count = len(StateManager.get_processing_documents())
+            if processing_count > 0:
+                st.info(f"🔄 {processing_count} 个文档正在处理中...")
+        else:
+            st.warning("暂无统计数据")
 
     def _render_quota_info(self):
         """渲染配额信息"""

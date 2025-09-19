@@ -1,5 +1,5 @@
 """
-文档列表组件
+文档列表组件 - 支持动态刷新
 负责显示已上传的文档列表，提供文档操作功能
 """
 import streamlit as st
@@ -7,44 +7,69 @@ import requests
 import time
 import logging
 from typing import List, Dict, Any
+from utils.state_manager import StateManager, AutoRefreshMixin
 
 logger = logging.getLogger(__name__)
 
 
-class DocumentListComponent:
-    """文档列表组件类"""
+class DocumentListComponent(AutoRefreshMixin):
+    """文档列表组件类 - 支持动态刷新"""
 
     def __init__(self, backend_url_internal: str):
+        super().__init__("documents", cache_duration=60)  # 60秒缓存
         self.backend_url_internal = backend_url_internal
 
-    def render(self):
-        """渲染文档列表组件"""
-        st.header("📋 文档列表")
+        # 初始化状态管理
+        StateManager.init_state()
 
-        # 刷新按钮
-        if st.button("🔄 刷新文档列表"):
-            st.rerun()
+    def render(self):
+        """渲染文档列表组件 - 支持动态刷新"""
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.header("📋 文档列表")
+
+        with col2:
+            # 刷新按钮
+            if st.button("🔄 刷新", help="刷新文档列表", key="refresh_docs"):
+                self.trigger_refresh()
+                st.rerun()
 
         # 获取并显示文档列表
         self._render_document_list()
 
     def _render_document_list(self):
-        """渲染文档列表"""
-        try:
-            docs_response = requests.get(f"{self.backend_url_internal}/api/documents/")
-            if docs_response.status_code == 200:
-                documents = docs_response.json()
+        """渲染文档列表 - 支持缓存和动态刷新"""
+        documents = None
 
-                if documents:
-                    for doc in documents:
-                        self._render_document_item(doc)
+        # 检查是否需要刷新数据
+        if self.should_refresh_data():
+            try:
+                docs_response = requests.get(f"{self.backend_url_internal}/api/documents/")
+                if docs_response.status_code == 200:
+                    documents = docs_response.json()
+                    self.set_cached_data(documents)
                 else:
-                    st.info("暂无上传的文档")
-            else:
-                st.error("获取文档列表失败")
+                    st.error("获取文档列表失败")
+                    return
+            except Exception as e:
+                st.error(f"文档列表获取错误: {str(e)}")
+                return
+        else:
+            # 使用缓存数据
+            documents = self.get_cached_data()
 
-        except Exception as e:
-            st.error(f"文档列表获取错误: {str(e)}")
+        if documents:
+            if len(documents) > 0:
+                # 显示文档总数
+                st.caption(f"共 {len(documents)} 个文档")
+
+                for doc in documents:
+                    self._render_document_item(doc)
+            else:
+                st.info("暂无上传的文档")
+        else:
+            st.warning("无法获取文档列表")
 
     def _render_document_item(self, doc: Dict[str, Any]):
         """渲染单个文档项"""
