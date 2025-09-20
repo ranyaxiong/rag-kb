@@ -39,22 +39,15 @@ def check_backend_connection() -> bool:
         return False
 
 
-def _setup_auto_refresh_features():
-    """设置自动刷新功能"""
-    from utils.final_refresh import add_enhanced_refresh_buttons, setup_background_notification, add_refresh_status_indicator
-    import datetime
+def _setup_realtime_update_features():
+    """设置实时更新功能"""
+    from utils.realtime_update import setup_realtime_update_system, add_realtime_refresh_buttons
 
-    # 设置后台通知系统
-    setup_background_notification()
+    # 初始化实时更新系统
+    setup_realtime_update_system(BACKEND_URL_INTERNAL)
 
-    # 添加状态指示器
-    add_refresh_status_indicator()
-
-    # 添加增强的刷新按钮
-    add_enhanced_refresh_buttons()
-
-    # 更新最后刷新时间
-    st.session_state.last_refresh_time = datetime.datetime.now().strftime("%H:%M:%S")
+    # 添加实时刷新按钮
+    add_realtime_refresh_buttons()
 
 
 def main():
@@ -70,8 +63,8 @@ def main():
     # 页面标题和自动刷新功能
     st.title("📚 RAG知识库系统")
 
-    # 设置自动刷新功能
-    _setup_auto_refresh_features()
+    # 设置实时更新功能
+    _setup_realtime_update_features()
 
     st.markdown("---")
 
@@ -89,9 +82,9 @@ def main():
 
         st.markdown("---")
 
-        # 自动刷新设置
-        from utils.simple_refresh import add_auto_refresh_option
-        add_auto_refresh_option()
+        # 实时更新设置
+        from utils.realtime_update import setup_realtime_refresh_mode
+        setup_realtime_refresh_mode()
 
         st.markdown("---")
 

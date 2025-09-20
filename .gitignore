@@ -18,8 +18,10 @@ venv.bak/
 # Data directories
 data/uploads/*
 data/chroma_db/*
+data/job_status/*
 !data/uploads/.gitkeep
 !data/chroma_db/.gitkeep
+!data/job_status/.gitkeep
 
 # IDE
 .vscode/
@@ -47,4 +49,4 @@ dist/
 *.egg-info/
 
 # Docker
-.dockerignore
+.dockerignorevscode-file://vscode-app/c:/Users/ryx-9/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html

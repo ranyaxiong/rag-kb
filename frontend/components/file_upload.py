@@ -198,12 +198,12 @@ class FileUploadComponent(AutoRefreshMixin):
                         document_id = result.get('document_id')
                         if document_id:
                             # 获取用户选择的刷新模式
-                            refresh_mode = st.session_state.get('refresh_mode', '手动刷新（默认）')
+                            refresh_mode = st.session_state.get('realtime_refresh_mode', '实时更新（推荐）')
 
-                            # 使用最终简化的刷新方案
-                            from utils.final_refresh import create_simple_auto_refresh_html
-                            refresh_html = create_simple_auto_refresh_html(document_id, self.client_url, refresh_mode)
-                            st.components.v1.html(refresh_html, height=80)
+                            # 使用真正的实时更新
+                            from utils.realtime_update import create_realtime_document_monitor
+                            monitor_html = create_realtime_document_monitor(document_id, self.client_url, refresh_mode)
+                            st.components.v1.html(monitor_html, height=90)
                     if result.get('filename'):
                         st.code(f"文件名: {result['filename']}")
                 elif response.status_code == 409:
