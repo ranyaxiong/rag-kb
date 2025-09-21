@@ -1,6 +1,3 @@
-# 开发环境Docker Compose配置
-version: '3.8'
-
 services:
   backend:
     build:

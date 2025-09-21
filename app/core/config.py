@@ -30,18 +30,23 @@ class Settings(BaseSettings):
     
     # 智谱AI配置
     zhipu_api_key: Optional[str] = None
-    
+
     # 向后兼容的OpenAI配置
     openai_api_key: Optional[str] = None
     openai_api_key_file: Optional[str] = None
     openai_api_key_base64: Optional[str] = None
-    
+
+    # 嵌入模型专用API Key（与LLM解耦）
+    embedding_api_key: Optional[str] = None
+    embedding_api_key_file: Optional[str] = None
+    embedding_api_key_base64: Optional[str] = None
+
     # 模型配置
-    api_base_url: Optional[str] = None  # 自定义API端点
+    api_base_url: Optional[str] = None  # 自定义API端点（聊天模型）
     embedding_api_base_url: Optional[str] = None  # 嵌入模型API端点
     chat_model: str = "gpt-3.5-turbo"  # 聊天模型
     embedding_model: str = "text-embedding-ada-002"  # 嵌入模型
-    
+
     # 存储配置
     upload_dir: str = "./data/uploads"
     chroma_db_path: str = "./data/chroma_db"
@@ -196,12 +201,35 @@ class Settings(BaseSettings):
         return self.get_api_key()
     
     def get_embedding_api_key(self) -> Optional[str]:
-        """获取嵌入模型的API Key"""
-        if self.embedding_provider == "zhipu":
+        """获取嵌入模型的API Key（优先使用专用配置，其次按提供商回退，最后复用通用API Key）"""
+        # 1) 专用嵌入 Key
+        if self.embedding_api_key:
+            return self.embedding_api_key
+        # 2) 从文件读取
+        if self.embedding_api_key_file:
+            try:
+                with open(self.embedding_api_key_file, 'r') as f:
+                    key = f.read().strip()
+                    if key:
+                        logger.info(f"Embedding API key loaded from file: {self.embedding_api_key_file}")
+                        return key
+            except Exception as e:
+                logger.warning(f"Failed to read embedding API key from file {self.embedding_api_key_file}: {e}")
+        # 3) 从base64
+        if self.embedding_api_key_base64:
+            try:
+                key = base64.b64decode(self.embedding_api_key_base64).decode('utf-8').strip()
+                if key:
+                    logger.info("Embedding API key loaded from base64 environment variable")
+                    return key
+            except Exception as e:
+                logger.warning(f"Failed to decode base64 embedding API key: {e}")
+        # 4) 提供商专用（zhipu 兼容旧行为）
+        if self.embedding_provider == "zhipu" and self.zhipu_api_key:
             return self.zhipu_api_key
-        else:
-            return self.get_api_key()
-    
+        # 5) 回退到通用 API Key（与 LLM 共享）
+        return self.get_api_key()
+
     def detect_provider_from_api_key(self, api_key: str) -> str:
         """根据API Key格式自动检测提供商"""
         if not api_key:
@@ -291,9 +319,16 @@ class Settings(BaseSettings):
         elif self.embedding_provider == "openai":
             if not config["embedding_api_base_url"]:
                 config["embedding_api_base_url"] = "https://api.openai.com/v1"
-        
+        elif self.embedding_provider == "qwen":
+            # Ali Qwen (DashScope) OpenAI-compatible endpoint
+            if not config["embedding_api_base_url"]:
+                config["embedding_api_base_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            # 若仍是默认OpenAI旧值，替换为Qwen的默认嵌入模型
+            if self.embedding_model == "text-embedding-ada-002":
+                config["embedding_model"] = "text-embedding-v3"
+
         return config
-    
+
     def get_cors_origins(self) -> list:
         """获取CORS允许的源域名列表"""
         if self.allowed_origins == "*":

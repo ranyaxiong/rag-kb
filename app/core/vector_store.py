@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 
@@ -62,28 +63,42 @@ class VectorStore:
             # 获取模型配置
             model_config = settings.get_model_config()
             
-            # 使用OpenAIEmbeddings（支持兼容的API）
-            embedding_kwargs = {
-                "api_key": api_key,
-                "model": model_config["embedding_model"]
-            }
-            
-            # 设置嵌入模型的API端点
-            embedding_api_url = model_config.get("embedding_api_base_url")
-            if embedding_api_url and embedding_api_url != "https://api.openai.com/v1":
-                embedding_kwargs["base_url"] = embedding_api_url
-                # 对于非OpenAI的API，设置组织ID为空
-                embedding_kwargs["organization"] = ""
-            
-            base_embeddings = OpenAIEmbeddings(**embedding_kwargs)
+            provider = model_config.get("embedding_provider")
+            model_name = model_config["embedding_model"]
+
+            if provider == "qwen":
+                # 使用原生 DashScopeEmbeddings，避免兼容模式在 /embeddings 的参数不一致
+                try:
+                    # 优先通过参数传入 Key；若版本不支持该参数，则回退到环境变量
+                    try:
+                        base_embeddings = DashScopeEmbeddings(model=model_name, dashscope_api_key=api_key)
+                    except TypeError:
+                        import os
+                        os.environ.setdefault("DASHSCOPE_API_KEY", api_key)
+                        base_embeddings = DashScopeEmbeddings(model=model_name)
+                except Exception as e:
+                    logger.error(f"Failed to initialize DashScopeEmbeddings: {e}")
+                    raise
+            else:
+                # 使用 OpenAIEmbeddings（支持 OpenAI 兼容 API）
+                embedding_kwargs = {
+                    "api_key": api_key,
+                    "model": model_name,
+                }
+                embedding_api_url = model_config.get("embedding_api_base_url")
+                if embedding_api_url and embedding_api_url != "https://api.openai.com/v1":
+                    embedding_kwargs["base_url"] = embedding_api_url
+                    embedding_kwargs["organization"] = ""
+                base_embeddings = OpenAIEmbeddings(**embedding_kwargs)
+
             # 使用缓存包装器
             self.embeddings = CachedEmbeddings(
                 base_embeddings=base_embeddings,
-                model_name=f"{model_config['embedding_provider']}/{model_config['embedding_model']}"
+                model_name=f"{provider}/{model_name}"
             )
-            
-            logger.info(f"Cached embeddings model initialized successfully: {model_config['embedding_provider']}/{model_config['embedding_model']}")
-            
+
+            logger.info(f"Cached embeddings model initialized successfully: {provider}/{model_name}")
+
         except Exception as e:
             logger.error(f"Error initializing embeddings: {str(e)}")
             raise
@@ -286,10 +301,13 @@ class VectorStore:
                 collection = self.chroma_client.get_collection(self.collection_name)
 
             count = collection.count()
+            # 报告当前配置的嵌入模型名称，避免误导
+            from app.core.config import settings as _settings
+            _cfg = _settings.get_model_config()
             return {
                 "collection_name": self.collection_name,
                 "document_count": count,
-                "embedding_model": "text-embedding-ada-002"
+                "embedding_model": _cfg.get("embedding_model", "unknown")
             }
         except Exception as e:
             logger.error(f"Error getting collection info: {str(e)}")

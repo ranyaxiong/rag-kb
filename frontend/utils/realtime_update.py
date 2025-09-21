@@ -335,15 +335,64 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
                         statusDiv.style.color = "#4CAF50";
                         console.log(`🎉 实时更新完成！文档数: ${{stats.total_documents}}, 块数: ${{stats.total_chunks}}`);
                     }} else {{
-                        statusDiv.innerHTML = "✅ 处理完成！请手动刷新查看更新";
+                        statusDiv.innerHTML = "✅ 处理完成！正在刷新页面...";
                         statusDiv.style.color = "#f57c00";
-                        console.log("未找到可更新的统计元素");
+                        console.log("未找到可更新的统计元素，执行页面刷新回退");
+
+                        // 轻量回退：优先尝试点击“刷新文档列表”按钮以触发 Streamlit rerun（避免整页刷新闪屏）
+                        function __clickStreamlitRefreshButton() {{
+                            try {{
+                                const doc = (window.parent && window.parent !== window) ? window.parent.document : document;
+                                const buttons = Array.from(doc.querySelectorAll('button'));
+                                const target = buttons.find(b => (b.innerText || '').includes('刷新文档列表') || (b.innerText || '').includes('刷新'));
+                                if (target) {{
+                                    console.log('触发轻量 rerun：点击刷新按钮');
+                                    target.click();
+                                    return true;
+                                }}
+                            }} catch (e) {{ /* ignore */ }}
+                            return false;
+                        }}
+
+                        setTimeout(async () => {{
+                            try {{
+                                if (window.RagRealtimeUpdater) {{ await window.RagRealtimeUpdater.updateAll(); }}
+                            }} catch (e) {{ /* ignore */ }}
+
+                            if (!__clickStreamlitRefreshButton()) {{
+                                (window.top || window.parent || window).location.reload();
+                            }}
+                        }}, 800);
+                    }}
+
+                    // 5. 更新文档列表（如果可用）
+                    try {{
+                        if (window.RagRealtimeUpdater) {{
+                            await window.RagRealtimeUpdater.updateDocumentList();
+                        }}
+                    }} catch (e) {{
+                        console.log('更新文档列表失败', e);
                     }}
 
                 }} catch (error) {{
                     console.error('实时更新失败:', error);
-                    statusDiv.innerHTML = "✅ 处理完成！更新失败，请手动刷新";
+                    statusDiv.innerHTML = "✅ 处理完成！更新失败，正在自动刷新...";
                     statusDiv.style.color = "#f57c00";
+
+                    function __clickStreamlitRefreshButton() {{
+                        try {{
+                            const doc = (window.parent && window.parent !== window) ? window.parent.document : document;
+                            const buttons = Array.from(doc.querySelectorAll('button'));
+                            const target = buttons.find(b => (b.innerText || '').includes('刷新文档列表') || (b.innerText || '').includes('刷新'));
+                            if (target) {{ target.click(); return true; }}
+                        }} catch (e) {{ /* ignore */ }}
+                        return false;
+                    }}
+                    setTimeout(() => {{
+                        if (!__clickStreamlitRefreshButton()) {{
+                            (window.top || window.parent || window).location.reload();
+                        }}
+                    }}, 800);
                 }}
             }}
 
@@ -472,10 +521,16 @@ def create_realtime_countdown_action(seconds: int) -> str:
                         statusDiv.innerHTML = "✅ 处理完成！请手动刷新查看更新";
                     }});
                 }} else {{
-                    // 如果更新器不存在，尝试刷新页面
+                    // 如果更新器不存在，尝试刷新页面（优先轻量 rerun）
                     statusDiv.innerHTML = "✅ 处理完成！正在刷新页面...";
                     setTimeout(() => {{
-                        window.location.reload();
+                        try {{
+                            const doc = (window.parent && window.parent !== window) ? window.parent.document : document;
+                            const buttons = Array.from(doc.querySelectorAll('button'));
+                            const target = buttons.find(b => (b.innerText || '').includes('刷新文档列表') || (b.innerText || '').includes('刷新'));
+                            if (target) {{ target.click(); return; }}
+                        }} catch (e) {{ /* ignore */ }}
+                        (window.top || window.parent || window).location.reload();
                     }}, 500);
                 }}
             }}

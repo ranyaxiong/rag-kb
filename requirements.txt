@@ -45,3 +45,6 @@ isort==5.13.0
 
 # Security (optional)
 keyring==24.3.0
+
+# Provider SDKs
+dashscope
