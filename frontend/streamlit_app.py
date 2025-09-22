@@ -588,13 +588,13 @@ def main():
 
         # Session State 调试（放在 fallback 之后、表单之前，确保展示的就是最新会话值）
         st.code(f"""
-Session State Values:
-- byok_api_key: {bool(st.session_state.get('byok_api_key', ''))}
-- byok_provider: {st.session_state.get('byok_provider', 'N/A')}
-- byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
-- byok_model: {st.session_state.get('byok_model', 'N/A')}
-- settings_loaded: {st.session_state.get('settings_loaded', False)}
-- settings_just_saved: {st.session_state.get('settings_just_saved', False)}
+                Session State Values:
+                - byok_api_key: {bool(st.session_state.get('byok_api_key', ''))}
+                - byok_provider: {st.session_state.get('byok_provider', 'N/A')}
+                - byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
+                - byok_model: {st.session_state.get('byok_model', 'N/A')}
+                - settings_loaded: {st.session_state.get('settings_loaded', False)}
+                - settings_just_saved: {st.session_state.get('settings_just_saved', False)}
         """)
 
         with st.form("byok_form"):
@@ -686,12 +686,6 @@ Session State Values:
 
         st.markdown("---")
 
-        # 文档统计
-        #
-        #                  
-        #              
-        #     
-        #
         # Session State
         st.code(f"""
 Session State Values (after form):
