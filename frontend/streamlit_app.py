@@ -494,6 +494,45 @@ def debug_localStorage():
     else:
         return "streamlit-js-eval 不可用"
 
+
+def display_quota_info():
+    try:
+        if st.session_state.get("settings_restoring"):
+            st.info("正在从浏览器恢复设置…")
+            return
+
+        if st.session_state.get("byok_api_key"):
+            st.success("🔑 使用自定义 API Key - 不受试用配额限制")
+            return
+
+        response = requests.get(
+            f"{BACKEND_URL_INTERNAL}/api/qa/quota",
+            headers=build_byok_headers()
+        )
+
+        if response.status_code != 200:
+            st.info("无法获取配额信息")
+            return
+
+        quota_info = response.json()
+
+        if not quota_info.get("quota_enabled", True):
+            st.info("当前未启用配额限制")
+            return
+
+        used = quota_info.get("used_count", 0)
+        limit = quota_info.get("daily_limit", 0)
+        remaining = quota_info.get("remaining", 0)
+        message = quota_info.get("message")
+
+        st.write(f"今日已用：{used} / 限额：{limit}，剩余：{remaining}")
+        if message:
+            st.caption(message)
+
+    except Exception as e:
+        st.warning(f"配额信息获取错误: {str(e)}")
+
+
 def main():
     """主应用函数"""
 
@@ -711,38 +750,9 @@ Session State Values (after form):
 
         # 配额信息显示
         st.subheader("📊 使用配额")
-        try:
-            if st.session_state.get("settings_restoring"):
-                st.info("正在从浏览器恢复设置…")
-            else:
-                # 有自定义Key：直接提示无限制
-                if st.session_state.get("byok_api_key"):
-                    st.success("🔑 使用自定义 API Key - 不受试用配额限制")
-                else:
-                    # 无自定义Key：查询后端配额
-                    quota_response = requests.get(
-                        f"{BACKEND_URL_INTERNAL}/api/qa/quota",
-                        headers=build_byok_headers()
-                    )
-                    if quota_response.status_code == 200:
-                        qi = quota_response.json()
-                        if not qi.get("quota_enabled", True):
-                            st.info("当前未启用配额限制")
-                        else:
-                            if qi.get("has_custom_key"):
-                                st.success("🔑 使用自定义 API Key - 不受试用配额限制")
-                            else:
-                                used = qi.get("used_count", 0)
-                                limit = qi.get("daily_limit", 0)
-                                remaining = qi.get("remaining", 0)
-                                msg = qi.get("message")
-                                st.write(f"今日已用：{used} / 限额：{limit}，剩余：{remaining}")
-                                if msg:
-                                    st.caption(msg)
-                    else:
-                        st.info("无法获取配额信息")
-        except Exception as e:
-            st.warning(f"配额信息获取错误: {str(e)}")
+        display_quota_info()
+
+        
 
     # 主界面 - 问答系统
     st.header("🤖 智能问答")
