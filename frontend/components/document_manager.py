@@ -7,6 +7,7 @@ import requests
 import logging
 from typing import Dict, Any
 from utils.state_manager import StateManager, AutoRefreshMixin
+from utils.settings_loader import SettingsStatus
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ class DocumentManagerComponent(AutoRefreshMixin):
         """渲染配额信息"""
         st.subheader("📊 使用配额")
         try:
-            if st.session_state.get("settings_restoring"):
+            if st.session_state.get("settings_status") == SettingsStatus.RESTORING.value:
                 st.info("正在从浏览器恢复设置…")
             else:
                 # 有自定义Key：直接提示无限制

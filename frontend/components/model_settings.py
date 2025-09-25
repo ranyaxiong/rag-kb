@@ -7,6 +7,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Any
+from utils.settings_loader import load_user_settings as load_user_settings_shared, SettingsStatus
 
 logger = logging.getLogger(__name__)
 
@@ -167,131 +168,12 @@ class ModelSettingsComponent:
         st.components.v1.html(html_code, height=0, width=0)
 
     def load_user_settings(self):
-        """从浏览器localStorage加载用户设置"""
-        defaults = {
-            "byok_api_key": "",
-            "byok_provider": "openai",
-            "byok_base_url": "",
-            "byok_model": "gpt-3.5-turbo"
-        }
-
-        # 初始化会话默认值
-        for key, default_value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = default_value
-
-        if "settings_loaded" not in st.session_state:
-            st.session_state.settings_loaded = False
-        if "settings_restoring" not in st.session_state:
-            st.session_state.settings_restoring = False
-        if "settings_retry_count" not in st.session_state:
-            st.session_state.settings_retry_count = 0
-
-        skip_restore = st.session_state.pop('skip_restore_once', False)
-
-        if st.session_state.settings_loaded or skip_restore:
-            return
-
-        # 先标记正在恢复，避免提问流程提前启动
-        st.session_state.settings_restoring = True
-
-        # 优先尝试通过 URL 参数恢复（兼容历史传参方案）
-        try:
-            self._restore_from_url_params()
-            if st.session_state.settings_loaded:
-                return
-        except Exception as exc:
-            logger.warning(f"URL param restore failed: {exc}")
-
-        # 通过 JS 直接读取浏览器存储
-        raw_data = self._read_browser_settings()
-
-        # 如果 JS 读取失败，再尝试 HTML 兜底方式
-        if raw_data is None:
-            self.load_with_html_fallback()
-            if st.session_state.settings_retry_count < 3:
-                st.session_state.settings_retry_count += 1
-                st.rerun()
-            st.session_state.settings_loaded = True
-            st.session_state.settings_restoring = False
-            return
-
-        # 解析并规范化各个字段
-        api_key = self._normalize_local_storage_value(raw_data.get("api_key_raw"))
-        provider = self._normalize_local_storage_value(raw_data.get("provider_raw"), "openai") or "openai"
-        base_url = self._normalize_local_storage_value(raw_data.get("base_url_raw"))
-        model = self._normalize_local_storage_value(raw_data.get("model_raw"), "gpt-3.5-turbo") or "gpt-3.5-turbo"
-
-        st.session_state.byok_api_key = api_key
-        st.session_state.byok_provider = provider
-        st.session_state.byok_base_url = base_url
-        st.session_state.byok_model = model
-
-        st.session_state.settings_loaded = True
-        st.session_state.settings_restoring = False
-        st.session_state.settings_retry_count = 0
-
-        logger.info(
-            "BYOK settings loaded from browser: provider=%s, api_key_exists=%s",
-            provider,
-            bool(api_key)
-        )
+        """统一入口：使用共享加载器实现设置恢复与重试。"""
+        load_user_settings_shared()
 
     def _restore_from_url_params(self):
-        """从URL参数恢复设置"""
-        try:
-            try:
-                query_params = dict(st.query_params)
-                clear_params = lambda: st.query_params.clear()
-            except AttributeError:
-                query_params = st.experimental_get_query_params()
-                clear_params = lambda: st.experimental_set_query_params()
-
-            restored_flag = query_params.get('restored')
-            if restored_flag == '1' or (
-                isinstance(restored_flag, list) and restored_flag and restored_flag[0] == '1'
-            ):
-                import base64
-
-                api_key_param = query_params.get('api_key')
-                provider_param = query_params.get('provider', 'openai')
-                base_url_param = query_params.get('base_url', '')
-                model_param = query_params.get('model', 'gpt-3.5-turbo')
-
-                def _decode_param(value, fallback=""):
-                    if not value:
-                        return fallback
-                    raw_value = value if isinstance(value, str) else value[0]
-                    if not raw_value:
-                        return fallback
-                    try:
-                        return base64.b64decode(raw_value).decode('utf-8') or fallback
-                    except Exception:
-                        return raw_value or fallback
-
-                api_key = _decode_param(api_key_param)
-                provider = provider_param if isinstance(provider_param, str) else provider_param[0]
-                base_url = _decode_param(base_url_param)
-                model = model_param if isinstance(model_param, str) else model_param[0]
-
-                st.session_state.byok_api_key = api_key.strip()
-                st.session_state.byok_provider = (provider or 'openai').strip()
-                st.session_state.byok_base_url = base_url.strip()
-                st.session_state.byok_model = (model or 'gpt-3.5-turbo').strip()
-
-                st.session_state.settings_loaded = True
-                st.session_state.settings_restoring = False
-                st.session_state.settings_retry_count = 0
-
-                logger.info(
-                    "BYOK settings restored from query params: provider=%s, api_key_exists=%s",
-                    st.session_state.byok_provider,
-                    bool(api_key)
-                )
-
-                clear_params()
-        except Exception as exc:
-            logger.warning(f"URL param restore failed: {exc}")
+        """Deprecated: handled by the shared loader in utils.settings_loader."""
+        return None
 
     def save_user_settings(self):
         """保存用户设置到浏览器localStorage"""
@@ -436,7 +318,7 @@ class ModelSettingsComponent:
                     st.session_state.byok_provider = (_unquote(_parsed.get('provider'), 'openai')).strip()
                     st.session_state.byok_base_url = (_unquote(_parsed.get('base_url'), "")).strip()
                     st.session_state.byok_model = (_unquote(_parsed.get('model'), 'gpt-3.5-turbo')).strip()
-                    st.session_state.settings_loaded = True
+                    st.session_state.settings_status = SettingsStatus.LOADED.value
             except Exception as _e:
                 logger.info(f"Fallback restore skipped: {type(_e).__name__}: {_e}")
 
@@ -447,7 +329,8 @@ Session State Values:
 - byok_provider: {st.session_state.get('byok_provider', 'N/A')}
 - byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
 - byok_model: {st.session_state.get('byok_model', 'N/A')}
-- settings_loaded: {st.session_state.get('settings_loaded', False)}
+- settings_status: {st.session_state.get('settings_status', 'idle')}
+- settings_attempts: {st.session_state.get('settings_attempts', 0)}
 - settings_just_saved: {st.session_state.get('settings_just_saved', False)}
             """)
 

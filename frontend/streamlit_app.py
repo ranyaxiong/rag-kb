@@ -68,6 +68,7 @@ from components.file_upload import FileUploadComponent
 from components.chat_interface import ChatInterface
 
 from utils.state_manager import StateManager
+from utils.settings_loader import load_user_settings as load_user_settings_shared, SettingsStatus
 from utils.realtime_update import setup_realtime_update_system
 
 # 配置页面
@@ -136,243 +137,22 @@ def check_backend_connection():
         return False
 
 def load_with_html_fallback():
-    """使用HTML方式读取localStorage的备用方案"""
-    # 创建一个隐藏的HTML组件来读取localStorage
-    html_code = """
-    <script>
-    (function(){
-      function read(k){
-        const v = localStorage.getItem(k);
-        try { return JSON.parse(v); } catch(e) { return v || ''; }
-      }
-      function buildSettings(){
-        return {
-          api_key: read('rag_byok_api_key') || '',
-          provider: read('rag_byok_provider') || 'openai',
-          base_url: read('rag_byok_base_url') || '',
-          model: read('rag_byok_model') || 'gpt-3.5-turbo'
-        };
-      }
-      function sendOnce(){
-        try {
-          const settings = buildSettings();
-          var el = document.getElementById('settings-data');
-          if (el) { el.textContent = JSON.stringify(settings); }
-          if (window.parent && window.parent.__rag_listener_installed) {
-            window.parent.postMessage({ type:'localStorage_data', data: settings }, '*');
-          } else {
-            setTimeout(sendOnce, 200);
-          }
-        } catch(e) {
-          setTimeout(sendOnce, 200);
-        }
-      }
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function(){ setTimeout(sendOnce, 50); });
-      } else {
-        setTimeout(sendOnce, 50);
-      }
-    })();
-    </script>
-    <div id="settings-data" style="display:none;"></div>
-    """
-
-    # 显示HTML组件
-    st.components.v1.html(html_code, height=0, width=0)
+    """Deprecated: use utils.settings_loader._load_with_html_fallback via shared loader."""
+    pass
 
 def _normalize_local_storage_value(value: str, default: str = "") -> str:
-    """尽可能把localStorage中的值解析为纯文本"""
-    if value is None:
-        return default
-
-    # localStorage 返回的可能是 JSON 字符串或裸字符串
-    cleaned = value
-    try:
-        cleaned = json.loads(cleaned)
-    except Exception:
-        pass
-
-    # 早期版本可能出现双重 JSON 编码，这里再尝试一次
-    if isinstance(cleaned, str):
-        stripped = cleaned.strip()
-        if stripped and stripped[0] in ('"', "'") and stripped[-1] == stripped[0]:
-            try:
-                cleaned = json.loads(cleaned)
-            except Exception:
-                cleaned = stripped.strip('"')
-
-    if isinstance(cleaned, str):
-        return cleaned.strip()
-
-    # 其他类型（如 null/None）统一落到默认值
-    return default
+    """Deprecated: normalization is handled in utils.settings_loader."""
+    return value if isinstance(value, str) else default
 
 
 def _read_browser_settings() -> dict | None:
-    """尝试通过JS一次性读取localStorage中的BYOK设置"""
-    if not JS_EVAL_AVAILABLE:
-        return None
-
-    try:
-        from streamlit_js_eval import streamlit_js_eval
-
-        payload = streamlit_js_eval(
-            """
-            (function(){
-              try {
-                const getLS = () => {
-                  try { return (window.top && window.top.localStorage) ? window.top.localStorage : localStorage; }
-                  catch(e) { return localStorage; }
-                };
-                const ls = getLS();
-                const result = {
-                  api_key_raw: ls.getItem('rag_byok_api_key'),
-                  provider_raw: ls.getItem('rag_byok_provider'),
-                  base_url_raw: ls.getItem('rag_byok_base_url'),
-                  model_raw: ls.getItem('rag_byok_model'),
-                  last_saved_raw: ls.getItem('rag_byok_last_saved')
-                };
-                return JSON.stringify(result);
-              } catch(e) {
-                return '';
-              }
-            })()
-            """,
-            key="ls_bulk_read",
-            want_output=True
-        )
-    except Exception as exc:  # pragma: no cover - 针对浏览器端异常
-        logger.warning(f"Failed to read BYOK settings via JS eval: {exc}")
-        return None
-
-    if not payload or not isinstance(payload, str):
-        return None
-
-    try:
-        return json.loads(payload)
-    except Exception:
-        return None
+    """Deprecated: reading handled in utils.settings_loader."""
+    return None
 
 
 def load_user_settings():
-    """从浏览器localStorage加载用户设置"""
-
-    defaults = {
-        "byok_api_key": "",
-        "byok_provider": "openai",
-        "byok_base_url": "",
-        "byok_model": "gpt-3.5-turbo"
-    }
-
-    # 初始化会话默认值
-    for key, default_value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
-
-    if "settings_loaded" not in st.session_state:
-        st.session_state.settings_loaded = False
-    if "settings_restoring" not in st.session_state:
-        st.session_state.settings_restoring = False
-    if "settings_retry_count" not in st.session_state:
-        st.session_state.settings_retry_count = 0
-
-    skip_restore = st.session_state.pop('skip_restore_once', False)
-
-    if st.session_state.settings_loaded or skip_restore:
-        return
-
-    # 先标记正在恢复，避免提问流程提前启动
-    st.session_state.settings_restoring = True
-
-    # 优先尝试通过 URL 参数恢复（兼容历史传参方案）
-    try:
-        try:
-            query_params = dict(st.query_params)
-            clear_params = lambda: st.query_params.clear()
-        except AttributeError:
-            query_params = st.experimental_get_query_params()
-            clear_params = lambda: st.experimental_set_query_params()
-
-        restored_flag = query_params.get('restored')
-        if restored_flag == '1' or (
-            isinstance(restored_flag, list) and restored_flag and restored_flag[0] == '1'
-        ):
-            import base64
-
-            api_key_param = query_params.get('api_key')
-            provider_param = query_params.get('provider', 'openai')
-            base_url_param = query_params.get('base_url', '')
-            model_param = query_params.get('model', 'gpt-3.5-turbo')
-
-            def _decode_param(value, fallback=""):
-                if not value:
-                    return fallback
-                raw_value = value if isinstance(value, str) else value[0]
-                if not raw_value:
-                    return fallback
-                try:
-                    return base64.b64decode(raw_value).decode('utf-8') or fallback
-                except Exception:
-                    return raw_value or fallback
-
-            api_key = _decode_param(api_key_param)
-            provider = provider_param if isinstance(provider_param, str) else provider_param[0]
-            base_url = _decode_param(base_url_param)
-            model = model_param if isinstance(model_param, str) else model_param[0]
-
-            st.session_state.byok_api_key = api_key.strip()
-            st.session_state.byok_provider = (provider or 'openai').strip()
-            st.session_state.byok_base_url = base_url.strip()
-            st.session_state.byok_model = (model or 'gpt-3.5-turbo').strip()
-
-            st.session_state.settings_loaded = True
-            st.session_state.settings_restoring = False
-            st.session_state.settings_retry_count = 0
-
-            logger.info(
-                "BYOK settings restored from query params: provider=%s, api_key_exists=%s",
-                st.session_state.byok_provider,
-                bool(api_key)
-            )
-
-            clear_params()
-            return
-    except Exception as exc:
-        logger.warning(f"URL param restore failed: {exc}")
-
-    # 通过 JS 直接读取浏览器存储
-    raw_data = _read_browser_settings()
-
-    # 如果 JS 读取失败，再尝试 HTML 兜底方式
-    if raw_data is None:
-        load_with_html_fallback()
-        if st.session_state.settings_retry_count < 3:
-            st.session_state.settings_retry_count += 1
-            st.rerun()
-        st.session_state.settings_loaded = True
-        st.session_state.settings_restoring = False
-        return
-
-    # 解析并规范化各个字段
-    api_key = _normalize_local_storage_value(raw_data.get("api_key_raw"))
-    provider = _normalize_local_storage_value(raw_data.get("provider_raw"), "openai") or "openai"
-    base_url = _normalize_local_storage_value(raw_data.get("base_url_raw"))
-    model = _normalize_local_storage_value(raw_data.get("model_raw"), "gpt-3.5-turbo") or "gpt-3.5-turbo"
-
-    st.session_state.byok_api_key = api_key
-    st.session_state.byok_provider = provider
-    st.session_state.byok_base_url = base_url
-    st.session_state.byok_model = model
-
-    st.session_state.settings_loaded = True
-    st.session_state.settings_restoring = False
-    st.session_state.settings_retry_count = 0
-
-    logger.info(
-        "BYOK settings loaded from browser: provider=%s, api_key_exists=%s",
-        provider,
-        bool(api_key)
-    )
+    """统一入口：使用共享加载器实现设置恢复与重试。"""
+    load_user_settings_shared()
 
 def save_user_settings():
     """保存用户设置到浏览器localStorage"""
@@ -497,7 +277,7 @@ def debug_localStorage():
 
 def display_quota_info():
     try:
-        if st.session_state.get("settings_restoring"):
+        if st.session_state.get("settings_status") == SettingsStatus.RESTORING.value:
             st.info("正在从浏览器恢复设置…")
             return
 
@@ -621,7 +401,7 @@ def main():
                 st.session_state.byok_provider = (_unquote(_parsed.get('provider'), 'openai')).strip()
                 st.session_state.byok_base_url = (_unquote(_parsed.get('base_url'), "")).strip()
                 st.session_state.byok_model = (_unquote(_parsed.get('model'), 'gpt-3.5-turbo')).strip()
-                st.session_state.settings_loaded = True
+                st.session_state.settings_status = SettingsStatus.LOADED.value
         except Exception as _e:
             logger.info(f"Fallback restore skipped: {type(_e).__name__}: {_e}")
 
@@ -632,7 +412,8 @@ def main():
                 - byok_provider: {st.session_state.get('byok_provider', 'N/A')}
                 - byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
                 - byok_model: {st.session_state.get('byok_model', 'N/A')}
-                - settings_loaded: {st.session_state.get('settings_loaded', False)}
+                - settings_status: {st.session_state.get('settings_status', 'idle')}
+                - settings_attempts: {st.session_state.get('settings_attempts', 0)}
                 - settings_just_saved: {st.session_state.get('settings_just_saved', False)}
         """)
 
@@ -732,7 +513,8 @@ Session State Values (after form):
 - byok_provider: {st.session_state.get('byok_provider', 'N/A')}
 - byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
 - byok_model: {st.session_state.get('byok_model', 'N/A')}
-- settings_loaded: {st.session_state.get('settings_loaded', False)}
+- settings_status: {st.session_state.get('settings_status', 'idle')}
+- settings_attempts: {st.session_state.get('settings_attempts', 0)}
 - settings_just_saved: {st.session_state.get('settings_just_saved', False)}
         """)
 
@@ -756,7 +538,7 @@ Session State Values (after form):
 
     # 主界面 - 问答系统
     st.header("🤖 智能问答")
-    if st.session_state.get("settings_restoring"):
+    if st.session_state.get("settings_status") == SettingsStatus.RESTORING.value:
         st.info("正在从浏览器恢复设置…")
         st.stop()
 
