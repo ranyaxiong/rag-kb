@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.api.documents import router as documents_router
 from app.api.qa import router as qa_router
 from app.api.cost_optimization import router as cost_router
+from app.api.auth import router as auth_router
 from app.models.schemas import HealthCheck
 
 # 加载环境变量
@@ -62,6 +63,7 @@ app.add_middleware(
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 app.include_router(qa_router, prefix="/api/qa", tags=["qa"])
 app.include_router(cost_router, prefix="/api/cost", tags=["cost"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
 
 @app.get("/")

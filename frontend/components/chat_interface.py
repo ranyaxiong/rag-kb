@@ -309,13 +309,13 @@ class ChatInterface:
             base_url = getattr(st.session_state, 'byok_base_url', '').strip()
             model = getattr(st.session_state, 'byok_model', '').strip()
             if api_key:
-                headers['Authorization'] = f"Bearer {api_key}"
+                headers['LLM-Api-Key'] = api_key
             if provider:
-                headers['X-LLM-Provider'] = provider
+                headers['LLM-Provider'] = provider
             if base_url:
-                headers['X-LLM-Base-URL'] = base_url
+                headers['LLM-Base-URL'] = base_url
             if model:
-                headers['X-LLM-Model'] = model
+                headers['LLM-Model'] = model
         except Exception:
             pass
         return headers

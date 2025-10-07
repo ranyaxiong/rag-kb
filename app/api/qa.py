@@ -1,25 +1,19 @@
 def _extract_overrides_from_headers(request) -> dict:
     """从请求头提取按请求覆盖配置（BYOK）
     支持的请求头：
-    - Authorization: "Bearer <API_KEY>" 或直接含 key
-    - X-LLM-Provider: openai/deepseek/zhipu/openrouter/custom
-    - X-LLM-Base-URL: 自定义兼容 OpenAI 的 API Base URL
-    - X-LLM-Model: 聊天模型名称
+    - LLM-Api-Key： BYOK 专用头部
+    - LLM-Provider: openai/deepseek/zhipu/openrouter/custom
+    - LLM-Base-URL: 自定义兼容 OpenAI 的 API Base URL
+    - LLM-Model: 聊天模型名称
     """
     overrides = {}
     try:
-        # API Key
-        auth = request.headers.get("Authorization") or request.headers.get("X-API-Key")
-        if auth:
-            token = auth.strip()
-            if token.lower().startswith("bearer "):
-                token = token.split(" ", 1)[1].strip()
-            if token:
-                overrides["api_key"] = token
-        # 其他覆盖项
-        provider = request.headers.get("X-LLM-Provider")
-        base_url = request.headers.get("X-LLM-Base-URL")
-        model = request.headers.get("X-LLM-Model")
+        api_key = request.headers.get("LLM-Api-Key")
+        if api_key:
+            overrides["api_key"] = api_key.strip()
+        provider = request.headers.get("LLM-Provider")
+        base_url = request.headers.get("LLM-Base-URL")
+        model = request.headers.get("LLM-Model")
         if provider:
             overrides["provider"] = provider
         if base_url:
@@ -39,6 +33,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi import Depends
+from app.api.auth import rquire_admin
 
 from app.core.vector_store import VectorStore
 from app.core.qa_engine import QAEngine
@@ -508,7 +504,7 @@ async def get_quota_info(request: Request):
 
 
 @router.post("/quota/reset")
-async def reset_quota(request: Request, admin_key: Optional[str] = None):
+async def reset_quota(request: Request, _: dict = Depends(require_admin)):
     """重置当前用户配额（管理员功能）"""
     try:
         from app.core.config import settings
@@ -516,9 +512,6 @@ async def reset_quota(request: Request, admin_key: Optional[str] = None):
         if not settings.enable_quota_limit:
             raise HTTPException(status_code=400, detail="Quota limit is disabled")
         
-        # 简单的管理员验证（实际应用中应使用更安全的方式）
-        if admin_key != "admin123":  # 这里应该使用更安全的管理员密钥
-            raise HTTPException(status_code=403, detail="Admin key required")
         
         from app.core.quota_manager import get_quota_manager
         quota_manager = get_quota_manager()
@@ -551,7 +544,7 @@ async def reset_quota(request: Request, admin_key: Optional[str] = None):
 
 
 @router.get("/quota/stats")
-async def get_all_quota_stats(admin_key: Optional[str] = None):
+async def get_all_quota_stats(_: dict = Depends(require_admin)):
     """获取所有用户配额统计（管理员功能）"""
     try:
         from app.core.config import settings
@@ -559,10 +552,7 @@ async def get_all_quota_stats(admin_key: Optional[str] = None):
         if not settings.enable_quota_limit:
             raise HTTPException(status_code=400, detail="Quota limit is disabled")
         
-        # 简单的管理员验证
-        if admin_key != "admin123":
-            raise HTTPException(status_code=403, detail="Admin key required")
-        
+                
         from app.core.quota_manager import get_quota_manager
         quota_manager = get_quota_manager()
         
