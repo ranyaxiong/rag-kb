@@ -94,6 +94,17 @@ class Settings(BaseSettings):
     enable_quota_limit: bool = True  # 是否启用配额限制
     default_daily_quota: int = 5     # 默认每日配额（未提供自定义API Key的用户）
     quota_storage_path: str = "./data/quotas"  # 配额数据存储路径
+
+    # jwt认证相关
+    jwt_algorithm: str = "HS256"
+    jwt_secret: str | None = None
+    jwt_secret_file: str | None = None
+    jwt_secret_base64: str | None = None
+
+    # 管理员密钥配置
+    admin_username: str = "admin"
+    admin_password_hash: str | None = None  
+    admin_password_hash_file: str | None = None
     
     class Config:
         env_file = ".env"
@@ -115,6 +126,28 @@ class Settings(BaseSettings):
         except Exception as e:
             logger.warning(f"Failed to create job status dir {self.job_status_dir}: {e}")
     
+
+    def get_jwt_secret(self) -> str:
+        if self.jwt_secret_file and os.path.exists(self.jwt_secret_file):
+            return open(self.jwt_secret_file, 'r', encoding="utf-8").read().strip()
+        
+        p = "/run/secrets/jwt_secret"
+        if os.path.exists(p):
+            return open(p, 'r', encoding="utf-8").read().strip()
+        
+        if self.jwt_secret_base64:
+            return base64.b64decode(self.jwt_secret_base64).decode('utf-8').strip()
+        
+
+    def get_admin_password_hash(self) -> str:
+        if self.admin_password_hash_file and os.path.exists(self.admin_password_hash_file):
+            return open(self.admin_password_hash_file, 'r', encoding="utf-8").read().strip()
+        
+        p = "/run/secrets/admin_password_hash"
+        if os.path.exists(p):
+            return open(p, 'r', encoding="utf-8").read().strip()
+
+   
     def get_api_key(self) -> Optional[str]:
         """安全地获取API Key（支持多种提供商）"""
         # 方式1: 新的通用API key配置

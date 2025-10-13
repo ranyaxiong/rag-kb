@@ -1,3 +1,43 @@
+"""
+问答API
+"""
+import logging
+from typing import List, Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi import Depends
+from app.api.auth import rquire_admin
+
+from app.core.vector_store import VectorStore
+from app.api.auth import require_admin
+from app.core.qa_engine import QAEngine
+from app.models.schemas import QuestionRequest, QuestionResponse, SourceDocument
+from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# 全局实例（延迟初始化）
+vector_store = None
+qa_engine = None
+
+def get_vector_store():
+    """获取向量存储实例（延迟初始化）"""
+    global vector_store
+    if vector_store is None:
+        vector_store = VectorStore()
+    return vector_store
+
+def get_qa_engine():
+    """获取QA引擎实例（延迟初始化）"""
+    global qa_engine
+    if qa_engine is None:
+        qa_engine = QAEngine(get_vector_store())
+    return qa_engine
+
+
 def _extract_overrides_from_headers(request) -> dict:
     """从请求头提取按请求覆盖配置（BYOK）
     支持的请求头：
@@ -24,44 +64,6 @@ def _extract_overrides_from_headers(request) -> dict:
         # 安全兜底：出现异常则返回当前累积的 overrides
         pass
     return overrides
-
-"""
-问答API
-"""
-import logging
-from typing import List, Optional
-
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
-from fastapi import Depends
-from app.api.auth import rquire_admin
-
-from app.core.vector_store import VectorStore
-from app.core.qa_engine import QAEngine
-from app.models.schemas import QuestionRequest, QuestionResponse, SourceDocument
-from langchain_openai import ChatOpenAI
-
-logger = logging.getLogger(__name__)
-
-router = APIRouter()
-
-# 全局实例（延迟初始化）
-vector_store = None
-qa_engine = None
-
-def get_vector_store():
-    """获取向量存储实例（延迟初始化）"""
-    global vector_store
-    if vector_store is None:
-        vector_store = VectorStore()
-    return vector_store
-
-def get_qa_engine():
-    """获取QA引擎实例（延迟初始化）"""
-    global qa_engine
-    if qa_engine is None:
-        qa_engine = QAEngine(get_vector_store())
-    return qa_engine
 
 
 @router.post("/ask", response_model=QuestionResponse)
