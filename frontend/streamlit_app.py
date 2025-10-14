@@ -79,6 +79,145 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+def add_floating_admin_button():
+    """添加右上角浮动的管理员登录按钮"""
+    is_logged_in = st.session_state.get("admin_jwt") is not None
+    
+    # 根据登录状态决定按钮样式和文本
+    if is_logged_in:
+        bg_color = "linear-gradient(135deg, #11998e 0%, #38ef7d 100%)"
+        button_text = "✓ 管理员"
+        tooltip_text = "进入管理面板"
+    else:
+        bg_color = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+        button_text = "🔐"
+        tooltip_text = "管理员登录"
+    
+    button_html = f"""
+    <style>
+    /* 浮动按钮主体 */
+    .floating-admin-btn {{
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        z-index: 999999;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: {bg_color};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.12);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        text-decoration: none;
+        font-size: 24px;
+        border: 2px solid rgba(255,255,255,0.3);
+    }}
+    
+    /* 悬停效果 */
+    .floating-admin-btn:hover {{
+        transform: translateY(-3px) scale(1.05);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15);
+    }}
+    
+    /* 点击效果 */
+    .floating-admin-btn:active {{
+        transform: translateY(-1px) scale(0.98);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }}
+    
+    /* 提示文本 */
+    .admin-tooltip {{
+        position: fixed;
+        top: 80px;
+        right: 85px;
+        background: rgba(38, 39, 48, 0.95);
+        color: white;
+        padding: 8px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease, transform 0.25s ease;
+        z-index: 999998;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transform: translateX(10px);
+    }}
+    
+    /* 提示文本箭头 */
+    .admin-tooltip::after {{
+        content: '';
+        position: absolute;
+        right: -6px;
+        top: 50%;
+        transform: translateY(-50%);
+        border-left: 6px solid rgba(38, 39, 48, 0.95);
+        border-top: 6px solid transparent;
+        border-bottom: 6px solid transparent;
+    }}
+    
+    /* 悬停时显示提示 */
+    .floating-admin-btn:hover + .admin-tooltip {{
+        opacity: 1;
+        transform: translateX(0);
+    }}
+    
+    /* 登录状态指示器（小绿点） */
+    .status-indicator {{
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 12px;
+        height: 12px;
+        background: #4CAF50;
+        border-radius: 50%;
+        border: 2px solid white;
+        animation: pulse 2s infinite;
+        display: {'block' if is_logged_in else 'none'};
+    }}
+    
+    @keyframes pulse {{
+        0%, 100% {{
+            transform: scale(1);
+            opacity: 1;
+        }}
+        50% {{
+            transform: scale(1.1);
+            opacity: 0.8;
+        }}
+    }}
+    
+    /* 响应式设计 */
+    @media (max-width: 768px) {{
+        .floating-admin-btn {{
+            width: 48px;
+            height: 48px;
+            top: 60px;
+            right: 15px;
+            font-size: 20px;
+        }}
+        .admin-tooltip {{
+            font-size: 12px;
+            padding: 6px 10px;
+        }}
+    }}
+    </style>
+    
+    <a href="/Admin" target="_self" class="floating-admin-btn" title="{tooltip_text}">
+        {button_text}
+        <span class="status-indicator"></span>
+    </a>
+    <div class="admin-tooltip">{tooltip_text}</div>
+    """
+    
+    st.markdown(button_html, unsafe_allow_html=True)
+
+
 # 配置API端点
 # Docker环境中，前端容器使用backend服务名，但浏览器需要使用localhost
 BACKEND_URL_INTERNAL = os.getenv("BACKEND_URL", "http://localhost:8000")  # 服务器端调用
@@ -315,6 +454,9 @@ def display_quota_info():
 
 def main():
     """主应用函数"""
+    
+    # 添加右上角浮动管理员按钮
+    add_floating_admin_button()
 
     # --- WebSocket & Client ID Management ---
     if 'client_id' not in st.session_state:
