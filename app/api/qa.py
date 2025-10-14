@@ -7,8 +7,6 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi import Depends
-from app.api.auth import rquire_admin
-
 from app.core.vector_store import VectorStore
 from app.api.auth import require_admin
 from app.core.qa_engine import QAEngine
