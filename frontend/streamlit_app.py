@@ -208,7 +208,7 @@ def add_floating_admin_button():
     }}
     </style>
     
-    <a href="/Admin" target="_self" class="floating-admin-btn" title="{tooltip_text}">
+    <a href="/_Admin" target="_self" class="floating-admin-btn" title="{tooltip_text}">
         {button_text}
         <span class="status-indicator"></span>
     </a>
