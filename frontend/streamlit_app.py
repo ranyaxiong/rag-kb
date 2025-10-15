@@ -96,6 +96,11 @@ def add_floating_admin_button():
     
     button_html = f"""
     <style>
+    /* 隐藏侧边栏中的页面导航 */
+    [data-testid="stSidebarNav"] {{
+        display: none !important;
+    }}
+    
     /* 浮动按钮主体 */
     .floating-admin-btn {{
         position: fixed;
@@ -208,7 +213,7 @@ def add_floating_admin_button():
     }}
     </style>
     
-    <a href="/_Admin" target="_self" class="floating-admin-btn" title="{tooltip_text}">
+    <a href="/Admin" target="_self" class="floating-admin-btn" title="{tooltip_text}">
         {button_text}
         <span class="status-indicator"></span>
     </a>
