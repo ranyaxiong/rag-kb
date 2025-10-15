@@ -50,3 +50,6 @@ dist/
 
 # Docker
 .dockerignorevscode-file://vscode-app/c:/Users/ryx-9/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html
+
+# md
+ADMIN_BUTTON_TEST_REPORT.md
