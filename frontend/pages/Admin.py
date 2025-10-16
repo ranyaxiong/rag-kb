@@ -8,6 +8,8 @@ st.set_page_config(
     page_icon="🔐",
     layout="wide"
 )
+st.sidebar.write(f"Backend URL: {BACKEND}")
+
 
 def check_token_validity():
     """检查JWT令牌是否有效"""
@@ -54,7 +56,9 @@ def admin_login_form():
                     data={"username": u, "password": p},
                     timeout=10
                 )
-                
+                st.write(f"状态码: {r.status_code}")
+                st.write(f"响应头: {r.headers}")
+                st.write(f"响应内容: {r.text[:500]}")  # 显示前500个字符
                 if r.ok:
                     token_data = r.json()
                     st.session_state["admin_jwt"] = token_data["access_token"]
