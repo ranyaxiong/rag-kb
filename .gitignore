@@ -19,6 +19,7 @@ venv.bak/
 data/uploads/*
 data/chroma_db/*
 data/job_status/*
+data/quotas/*
 !data/uploads/.gitkeep
 !data/chroma_db/.gitkeep
 !data/job_status/.gitkeep
