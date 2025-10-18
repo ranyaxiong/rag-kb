@@ -2,7 +2,8 @@ import os, requests, streamlit as st
 from datetime import datetime, timedelta
 import jwt
 
-BACKEND = os.getenv("BACKEND_URL", "http://localhost:8000")
+#BACKEND = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND = os.getenv("BACKEND_URL")
 st.set_page_config(
     page_title="管理员控制台",
     page_icon="🔐",
@@ -33,6 +34,7 @@ def admin_login_form():
     """管理员登录表单"""
     st.title("🔐 管理员登录")
     st.markdown("---")
+    st.write(st.version)
     
     with st.form("admin_login"):
         u = st.text_input("用户名", value="admin", placeholder="请输入管理员用户名")
