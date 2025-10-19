@@ -1,0 +1,95 @@
+version: '3.8'
+
+# Local HTTPS Development Environment
+# Using Nginx with mkcert certificates
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    expose:
+      - "8000"
+    volumes:
+      - ../app:/app/app
+      - ../data:/app/data
+      - ../logs:/app/logs
+      # Mount secrets if using Docker secrets approach
+      #- ../secrets:/run/secrets:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      # Development Mode
+      - DEBUG=True
+      
+      # CORS Configuration for Local HTTPS
+      - ALLOWED_ORIGINS=https://localhost,https://127.0.0.1,https://local.rag-kb.dev,http://localhost:8501
+      - ALLOWED_METHODS=GET,POST,DELETE,PUT,OPTIONS
+      - ALLOWED_HEADERS=Content-Type,Authorization,LLM-API-Key,LLM-Provider,LLM-Base-URL,LLM-Model,Cache-Control,Connection
+      
+      
+    env_file:
+      - ../.env
+    restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    expose:
+      - "8501"
+    depends_on:
+      - backend
+    environment:
+      # Frontend accesses backend via internal network
+      - BACKEND_URL=http://backend:8000
+    restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  nginx:
+    image: nginx:alpine
+    container_name: rag-kb-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Nginx configuration
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # mkcert local certificates
+      - ./nginx/certs:/etc/nginx/certs:ro
+      # Nginx logs (optional, for debugging)
+      - ../logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  app_data:
+    driver: local
+

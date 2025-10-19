@@ -5,7 +5,7 @@ import os
 import json
 import base64
 from typing import Optional, Dict, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     """应用配置类"""
-    
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     # 应用基本配置
     app_name: str = "RAG Knowledge Base"
     app_version: str = "1.0.0"
@@ -105,11 +105,7 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password_hash: str | None = None  
     admin_password_hash_file: str | None = None
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-
+               
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # 确保目录存在

@@ -8,7 +8,6 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from app.core.config import settings
 from app.api.documents import router as documents_router
@@ -17,8 +16,6 @@ from app.api.cost_optimization import router as cost_router
 from app.api.auth import router as auth_router
 from app.models.schemas import HealthCheck
 
-# 加载环境变量
-load_dotenv()
 
 # 配置日志
 logging.basicConfig(
@@ -82,7 +79,7 @@ async def health_check():
     try:
         # 检查基本配置
         checks = {
-            "openai_api_key": bool(settings.openai_api_key),
+            "api_key": bool(settings.get_api_key()),
             "upload_dir": os.path.exists(settings.upload_dir),
             "chroma_db_path": os.path.exists(settings.chroma_db_path)
         }

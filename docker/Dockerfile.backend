@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # 复制应用代码
 COPY app/ ./app/
-COPY .env* ./
+
 
 # 创建数据目录
 RUN mkdir -p /app/data/uploads /app/data/chroma_db
