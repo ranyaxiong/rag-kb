@@ -55,3 +55,7 @@ dist/
 # md
 ADMIN_BUTTON_TEST_REPORT.md
 STREAMLIT_VERSION_VERIFICATION.md
+WARP.md
+
+# pem
+*.pem
