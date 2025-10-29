@@ -92,9 +92,10 @@ class VectorStore:
                 base_embeddings = OpenAIEmbeddings(**embedding_kwargs)
 
             # 使用缓存包装器
+            base = (embedding_api_url or "https://api.openai.com/v1").rstrip('/')
             self.embeddings = CachedEmbeddings(
                 base_embeddings=base_embeddings,
-                model_name=f"{provider}/{model_name}"
+                model_name=f"{provider}/{model_name}@{base}"
             )
 
             logger.info(f"Cached embeddings model initialized successfully: {provider}/{model_name}")

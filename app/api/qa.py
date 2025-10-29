@@ -2,7 +2,7 @@
 问答API
 """
 import logging
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +12,10 @@ from app.api.auth import require_admin
 from app.core.qa_engine import QAEngine
 from app.models.schemas import QuestionRequest, QuestionResponse, SourceDocument
 from langchain_openai import ChatOpenAI
+
+from app.core.config import settings
+from app.core.url_safety import is_safe_base_url
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +53,19 @@ def _extract_overrides_from_headers(request) -> dict:
         api_key = request.headers.get("LLM-Api-Key")
         if api_key:
             overrides["api_key"] = api_key.strip()
+
         provider = request.headers.get("LLM-Provider")
-        base_url = request.headers.get("LLM-Base-URL")
-        model = request.headers.get("LLM-Model")
         if provider:
-            overrides["provider"] = provider
+            overrides["provider"] = provider.strip() if provider.strip() in ["openai", "deepseek", "zhipu", "openrouter", "custom"] else "openai"
+
+        base_url = request.headers.get("LLM-Base-URL")
         if base_url:
+            if not api_key: raise HTTPException(status_code=400, detail="需提供LLM-Api-Key")
+            if not is_safe_base_url(base_url, settings.get_allowed_chat_base_urls()):
+                raise HTTPException(status_code=400, detail="LLM-Base-URL 不安全")
             overrides["api_base_url"] = base_url
+
+        model = request.headers.get("LLM-Model")
         if model:
             overrides["model"] = model
     except Exception:

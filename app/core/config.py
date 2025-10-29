@@ -7,6 +7,9 @@ import base64
 from typing import Optional, Dict, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
+from fastapi import HTTPException
+from app.core.url_safety import is_safe_base_url
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,10 @@ class Settings(BaseSettings):
     # LLM配置 - 支持多种模型提供商
     llm_provider: str = "openai"  # 支持: openai, deepseek, zhipu, etc.
     embedding_provider: str = "openai"  # 嵌入模型提供商，可以与LLM提供商不同
+
+    # Base URL配置
+    allowed_chat_base_urls: str = ("https://api.openai.com/v1,https://api.deepseek.com,"
+  "https://open.bigmodel.cn/api/paas/v4,https://openrouter.ai/api/v1")
     
     # API配置 - 支持多种获取方式
     api_key: Optional[str] = None
@@ -144,6 +151,21 @@ class Settings(BaseSettings):
             return open(p, 'r', encoding="utf-8").read().strip()
 
    
+    def get_allowed_chat_base_urls(self) -> list[str]:
+        """获取允许的聊天模型API端点列表"""
+        return [url.strip() for url in self.allowed_chat_base_urls.split(",") if url.strip()]
+    
+    
+    def get_model_config(self, overrides=None):
+        overrides = overrides or {}
+        cfg = {}
+        if overrides.get("api_base_url"):
+            url = overrides["api_base_url"]
+            if not is_safe_base_url(url, self.get_allowed_chat_base_urls()):
+                raise HTTPException(status_code=400, detail="LLM-Base-URL 不安全")
+            cfg["api_base_url"] = url
+        return cfg
+
     def get_api_key(self) -> Optional[str]:
         """安全地获取API Key（支持多种提供商）"""
         # 方式1: 新的通用API key配置

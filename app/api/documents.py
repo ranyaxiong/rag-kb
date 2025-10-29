@@ -4,7 +4,7 @@
 import logging
 import os
 import uuid
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
@@ -186,7 +186,7 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-async def process_document_background(file_path: str, filename: str, document_id: str = None):
+async def process_document_background(file_path: str, filename: str, document_id: Optional[str] = None):
     """后台处理文档"""
     try:
         logger.info(f"Processing document: {filename} (ID: {document_id})")

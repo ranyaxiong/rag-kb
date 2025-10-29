@@ -38,6 +38,8 @@ class QAEngine:
             overrides = self._overrides or {}
             # 1) API Key 优先使用请求覆盖，否则使用全局配置
             api_key = overrides.get("api_key") or settings.get_api_key()
+            if overrides.get("api_base_url") and not overrides.get("api_key"):
+                 raise ValueError("base URL 需同时提供LLM-Api-Key")
             if not api_key:
                 raise ValueError(f"API key not configured for {settings.llm_provider}")
             
@@ -215,7 +217,8 @@ class QAEngine:
             
             # 获取模型配置用于缓存key（使用生效的配置，避免与默认配置混淆）
             model_cfg = self._effective_model_config or settings.get_model_config()
-            model_name = f"{model_cfg['provider']}/{model_cfg['chat_model']}"
+            base = (model_cfg['api_base_url'] or "https://api.openai.com/v1").rstrip('/')
+            model_name = f"{model_cfg['provider']}/{model_cfg['chat_model']}@{base}"
             
             # 检查QA缓存
             cached_result = cache_manager.get_qa_cache(question, context_hash, model_name)
