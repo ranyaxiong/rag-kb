@@ -377,10 +377,10 @@ async def submit_feedback(
 
 
 @router.get("/health")
-async def qa_health_check():
+async def qa_health_check(deep: Optional[bool] = None, with_qa: Optional[bool] = None):
     """问答系统健康检查"""
     try:
-        health_info = get_qa_engine().health_check()
+        health_info = get_qa_engine().health_check(deep=deep, with_qa=with_qa)
         
         return {
             "success": True,

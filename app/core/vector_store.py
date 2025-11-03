@@ -411,30 +411,31 @@ class VectorStore:
         """按内部document_id查询文档汇总（轻量）"""
         return self._get_document_summary_by_key("document_id", document_id)
     
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self, deep: Optional[bool] = None) -> Dict[str, Any]:
         """健康检查"""
         self._ensure_initialized()
-        try:
-            # 检查向量存储连接
-            info = self.get_collection_info()
-            
-            # 测试嵌入模型
-            test_embedding = self.embeddings.embed_query("test")
-            
+        info = self.get_collection_info()
+        if deep is False:
+            if isinstance(info, dict) and info.get("error"):
+                return {"status": "unhealthy","vector_store": "unavailable", "collection_info": info}  
             return {
                 "status": "healthy",
                 "vector_store": "connected",
-                "embedding_model": "working",
-                "collection_info": info,
-                "embedding_dimension": len(test_embedding)
+                "collection_info": info
+
             }
+        
+        # 测试嵌入模型
+        test_embedding = self.embeddings.embed_query("test")
+        
+        return {
+            "status": "healthy",
+            "vector_store": "connected",
+            "embedding_model": "working",
+            "collection_info": info,
+            "embedding_dimension": len(test_embedding)
+        }
             
-        except Exception as e:
-            logger.error(f"Health check failed: {str(e)}")
-            return {
-                "status": "unhealthy",
-                "error": str(e)
-            }
     
     def as_retriever(self, **kwargs):
         """返回LangChain检索器接口"""

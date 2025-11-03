@@ -355,34 +355,30 @@ class QAEngine:
             logger.error(f"Error getting relevant documents: {str(e)}")
             return []
     
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self, deep: Optional[bool] = None, with_qa: Optional[bool] = None) -> Dict[str, Any]:
         """健康检查"""
         try:
             # 检查向量存储
-            vector_health = self.vector_store.health_check()
-            
-            # 测试LLM连接
-            test_response = self.llm.predict("Hello")
-            
-            # 测试完整的QA流程（如果向量存储中有数据）
+            vector_health = self.vector_store.health_check(deep=deep)
+            llm_status, qa_status = "skipped", "skipped"
             collection_info = self.vector_store.get_collection_info()
-            qa_test_result = "skipped"
+            if deep is not False:
+                self.llm.predict("Hello");
+                llm_status = "connected"
+                if (with_qa or (with_qa is None and collection_info.get("document_count", 0) > 0)):
+                    try: qa_status = "working" if self.ask("测试问题", 1).answer else "failed"
+                    except: qa_status = "failed"
             
-            if collection_info.get("document_count", 0) > 0:
-                try:
-                    test_qa = self.ask("测试问题", max_sources=1)
-                    qa_test_result = "working" if test_qa.answer else "failed"
-                except:
-                    qa_test_result = "failed"
-            
+            overall  = "healthy" if (vector_health.get("status")== "healthy" 
+                                     and llm_status in ("connected", "skipped") 
+                                     and qa_status in ("working", "skipped")) else "degraded"
             return {
-                "status": "healthy",
-                "llm": "connected",
+                "status": overall,
+                "llm": llm_status,
                 "vector_store": vector_health.get("status", "unknown"),
-                "qa_chain": qa_test_result,
+                "qa_chain": qa_status,
                 "collection_info": collection_info
             }
-            
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")
             return {
