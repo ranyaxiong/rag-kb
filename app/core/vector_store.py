@@ -62,7 +62,8 @@ class VectorStore:
             
             # 获取模型配置
             model_config = settings.get_model_config()
-            
+            embedding_api_url = model_config.get("embedding_api_base_url")
+
             provider = model_config.get("embedding_provider")
             model_name = model_config["embedding_model"]
 
@@ -292,7 +293,7 @@ class VectorStore:
     
     def get_collection_info(self) -> Dict[str, Any]:
         """获取集合信息"""
-        self._ensure_initialized()
+        # 避免在此处初始化嵌入；尽量使用轻量客户端获取信息
         try:
             # 优先使用与当前LangChain向量库绑定的collection，避免路径不一致
             collection = getattr(self.vectorstore, "_collection", None)
@@ -413,29 +414,36 @@ class VectorStore:
     
     def health_check(self, deep: Optional[bool] = None) -> Dict[str, Any]:
         """健康检查"""
-        self._ensure_initialized()
-        info = self.get_collection_info()
         if deep is False:
+            # 轻量检查：仅确认向量库可连通，不触发嵌入初始化/外部网络
+            self._ensure_chroma_client_only()
+            info = self.get_collection_info()
             if isinstance(info, dict) and info.get("error"):
-                return {"status": "unhealthy","vector_store": "unavailable", "collection_info": info}  
+                return {"status": "unhealthy", "vector_store": "unavailable", "collection_info": info}
             return {
                 "status": "healthy",
                 "vector_store": "connected",
                 "collection_info": info
-
             }
-        
-        # 测试嵌入模型
-        test_embedding = self.embeddings.embed_query("test")
-        
-        return {
-            "status": "healthy",
-            "vector_store": "connected",
-            "embedding_model": "working",
-            "collection_info": info,
-            "embedding_dimension": len(test_embedding)
-        }
-            
+        try:
+            # 深度检查：初始化并验证嵌入模型
+            self._ensure_initialized()
+            info = self.get_collection_info()
+            test_embedding = self.embeddings.embed_query("test")
+            return {
+                "status": "healthy",
+                "vector_store": "connected",
+                "embedding_model": "working",
+                "collection_info": info,
+                "embedding_dimension": len(test_embedding)
+            }
+        except Exception as e:
+            logger.error(f"Vector store health check failed: {str(e)}")
+            return {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+
     
     def as_retriever(self, **kwargs):
         """返回LangChain检索器接口"""
