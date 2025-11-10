@@ -33,8 +33,9 @@ class TestCachedEmbeddings:
     def cached_embeddings(self, mock_base_embeddings, mock_cache_manager):
         """创建CachedEmbeddings实例"""
         with patch('app.core.cached_embeddings.cache_manager', mock_cache_manager):
-            return CachedEmbeddings(mock_base_embeddings, "test-model")
-    
+            ce = CachedEmbeddings(mock_base_embeddings, "test-model")
+            yield ce
+
     def test_initialization(self, mock_base_embeddings):
         """测试初始化"""
         cached_emb = CachedEmbeddings(mock_base_embeddings, "test-model")
