@@ -256,13 +256,13 @@ class TestCachedEmbeddings:
         cached_embeddings.embed_documents(["文档1", "文档2"])
         
         stats = cached_embeddings.get_cache_stats()
-        
-        # 总计：3次缓存命中（查询2 + 文档2），2次API调用（查询1 + 文档1）
-        assert stats["cache_hits"] == 3
+
+        # 总计：2次缓存命中（查询2 + 文档2），2次API调用（查询1 + 文档1）
+        assert stats["cache_hits"] == 2
         assert stats["api_calls"] == 2
-        assert stats["total_requests"] == 5
-        assert stats["cache_hit_rate"] == 60.0  # 3/5 * 100
-    
+        assert stats["total_requests"] == 4
+        assert stats["cache_hit_rate"] == 50.0  # 2/4 * 100
+
     def test_embed_query_with_api_error(self, cached_embeddings, mock_cache_manager, mock_base_embeddings):
         """测试API调用失败的错误处理"""
         mock_cache_manager.get_embedding_cache.return_value = None
@@ -271,10 +271,10 @@ class TestCachedEmbeddings:
         with pytest.raises(Exception, match="API调用失败"):
             cached_embeddings.embed_query("测试文本")
         
-        # 验证API调用计数器仍然增加（用于统计目的）
-        assert cached_embeddings.api_calls == 1
+        # 失败时不计入API调用计数
+        assert cached_embeddings.api_calls == 0
         assert cached_embeddings.cache_hits == 0
-    
+
     def test_embed_documents_with_api_error(self, cached_embeddings, mock_cache_manager, mock_base_embeddings):
         """测试批量嵌入时API调用失败"""
         mock_cache_manager.get_embedding_cache.return_value = None
@@ -283,8 +283,8 @@ class TestCachedEmbeddings:
         with pytest.raises(Exception, match="批量API调用失败"):
             cached_embeddings.embed_documents(["文档1", "文档2"])
         
-        # 验证API调用计数器增加
-        assert cached_embeddings.api_calls == 2
+        # 失败时不计入API调用计数
+        assert cached_embeddings.api_calls == 0
         assert cached_embeddings.cache_hits == 0
 
 

@@ -290,6 +290,10 @@ class VectorStore:
     def delete_document_by_id(self, document_id: str) -> bool:
         """根据文档ID删除相关的所有chunks"""
         return self.delete_documents_by_metadata({"document_id": document_id})
+
+    def delete_by_metadata(self, key: str, value: str) -> bool:
+        """根据元数据键值对删除文档（便捷方法）"""
+        return self.delete_documents_by_metadata({key: value})
     
     def get_collection_info(self) -> Dict[str, Any]:
         """获取集合信息"""

@@ -22,6 +22,10 @@ class FileUploadComponent(AutoRefreshMixin):
         # 初始化上传状态
         if "uploading" not in st.session_state:
             st.session_state.uploading = False
+
+        # 初始化当前处理的文档ID列表
+        if "processing_documents" not in st.session_state:
+            st.session_state.processing_documents = {}
     
     def _get_max_file_size_mb(self) -> int:
         """从后端获取允许的最大文件大小，失败回退到50MB"""
@@ -44,6 +48,30 @@ class FileUploadComponent(AutoRefreshMixin):
         except Exception:
             return 300
     
+    def _cancel_processing(self, document_id: str, filename: str):
+        """取消文档处理"""
+        try:
+            response = requests.post(
+                f"{self.backend_url}/api/documents/cancel/{document_id}",
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    st.success(f"✅ 已取消 {filename} 的处理")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.processing_documents:
+                        del st.session_state.processing_documents[document_id]
+                    st.info(f"📝 {result.get('message', '任务已取消')}")
+                else:
+                    st.warning(f"⚠️ {result.get('message', '无法取消任务')}")
+            else:
+                st.error(f"❌ 取消失败: {response.text}")
+
+        except Exception as e:
+            st.error(f"❌ 取消任务时出错: {str(e)}")
+
     def _check_processing_status(self, document_id: str, filename: str):
         """检查文档处理状态"""
         try:
@@ -51,21 +79,32 @@ class FileUploadComponent(AutoRefreshMixin):
                 f"{self.backend_url}/api/documents/status/{document_id}",
                 timeout=10
             )
-            
+
             if response.status_code == 200:
                 result = response.json()
                 status = result.get('status', 'unknown')
-                
+
                 if status == 'completed':
                     st.success(f"✅ {filename} 处理完成!")
                     chunk_count = result.get('chunk_count', 0)
                     if chunk_count > 0:
                         st.info(f"📄 文档已分割成 {chunk_count} 个块，可用于问答")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.processing_documents:
+                        del st.session_state.processing_documents[document_id]
+                elif status == 'cancelled':
+                    st.warning(f"⚠️ {filename} 已被取消")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.processing_documents:
+                        del st.session_state.processing_documents[document_id]
                 elif status == 'failed':
                     err = result.get('error') or result.get('message') or '未知错误'
                     st.error(f"❌ {filename} 处理失败: {err}")
                     # 可选：显示简单建议
                     st.info("💡 建议：确认文档未加密、扫描质量清晰；如为扫描版PDF请稍后重试或压缩体积后再传。")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.processing_documents:
+                        del st.session_state.processing_documents[document_id]
                 elif status == 'processing':
                     progress = result.get('progress')
                     message = result.get('message')
@@ -80,14 +119,33 @@ class FileUploadComponent(AutoRefreshMixin):
                     st.warning(f"⚠️ {filename} 状态未知: {status}")
             else:
                 st.error(f"❌ 无法查询状态: {response.text}")
-                
+
         except Exception as e:
             st.error(f"❌ 查询状态时出错: {str(e)}")
     
     def render(self):
         """渲染文件上传界面"""
-        
+
         st.subheader("📤 上传文档")
+
+        # 显示正在处理的文档
+        if st.session_state.processing_documents:
+            with st.expander(f"🔄 正在处理的文档 ({len(st.session_state.processing_documents)})", expanded=True):
+                for doc_id, doc_info in list(st.session_state.processing_documents.items()):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+
+                    with col1:
+                        st.write(f"📄 {doc_info['filename']}")
+
+                    with col2:
+                        if st.button("📊 状态", key=f"check_{doc_id}"):
+                            self._check_processing_status(doc_id, doc_info['filename'])
+
+                    with col3:
+                        if st.button("🛑 取消", key=f"cancel_list_{doc_id}"):
+                            self._cancel_processing(doc_id, doc_info['filename'])
+
+                st.markdown("---")
         
         # 显示支持的格式
         with st.expander("支持的文件格式", expanded=False):
@@ -160,14 +218,18 @@ class FileUploadComponent(AutoRefreshMixin):
                 if response.status_code == 200:
                     result = response.json()
                     st.success(f"✅ {uploaded_file.name} 上传成功!")
-                    
+
                     if result.get('processing_mode') == 'async':
                         # 异步处理模式
                         document_id = result.get('document_id')
                         st.info(f"🔄 文档正在后台异步处理中... 文档ID: `{document_id}`")
 
-                        # 添加到处理队列
+                        # 添加到处理队列和session state
                         StateManager.add_processing_document(document_id)
+                        st.session_state.processing_documents[document_id] = {
+                            "filename": uploaded_file.name,
+                            "upload_time": uploaded_file.size
+                        }
 
                         # 根据文件大小给出更准确的预估时间
                         file_size_mb = uploaded_file.size / (1024 * 1024)
@@ -177,18 +239,27 @@ class FileUploadComponent(AutoRefreshMixin):
                             st.write("• 📊 处理进度将实时显示在下方监听区域")
                             st.write("• ✅ 处理完成后会自动更新文档列表和统计信息")
                             st.write("• ⏰ 如果监听超时，请使用右侧刷新按钮查看结果")
+                            st.write("• 🛑 如需取消处理，请点击下方取消按钮")
                         else:
                             st.info("💡 小型文档通常在1-2分钟内完成处理，完成后会自动更新列表")
-                        
-                        # 提供状态查询按钮
-                        if st.button(f"📊 查看 {uploaded_file.name} 处理状态", key=f"status_{document_id}"):
-                            self._check_processing_status(document_id, uploaded_file.name)
-                            
+
+                        # 创建两列：状态查询和取消按钮
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            if st.button(f"📊 查看处理状态", key=f"status_{document_id}"):
+                                self._check_processing_status(document_id, uploaded_file.name)
+
+                        with col2:
+                            if st.button(f"🛑 取消处理", key=f"cancel_{document_id}", type="secondary"):
+                                self._cancel_processing(document_id, uploaded_file.name)
+
                         # 友好提示
                         st.info("💡 **等待期间您可以：**")
                         st.write("• 继续上传其他文档")
-                        st.write("• 查看右侧已有文档列表") 
+                        st.write("• 查看右侧已有文档列表")
                         st.write("• 测试已有文档的问答功能")
+                        st.write("• 如果文档过大或处理时间过长，可以点击取消按钮停止处理")
                     else:
                         st.info("文档正在后台处理中，请稍候...")
                     

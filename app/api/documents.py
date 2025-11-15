@@ -566,3 +566,89 @@ async def get_pdf_info(document_id: str):
         logger.error(f"Error getting PDF info for {document_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get PDF info: {str(e)}")
 
+
+@router.post("/cancel/{document_id}")
+async def cancel_document_processing(document_id: str):
+    """
+    取消正在处理的文档任务
+
+    Args:
+        document_id: 文档ID（上传时返回的document_id）
+
+    Returns:
+        取消结果，包含成功状态和消息
+    """
+    try:
+        logger.info(f"Received cancel request for document: {document_id}")
+
+        # 调用异步处理器的取消方法
+        result = async_processor.cancel_task(document_id)
+
+        if result["success"]:
+            logger.info(f"Successfully cancelled task: {document_id}")
+            return {
+                "success": True,
+                "message": result["message"],
+                "document_id": document_id,
+                "status": result["status"]
+            }
+        else:
+            logger.warning(f"Failed to cancel task {document_id}: {result['message']}")
+            return {
+                "success": False,
+                "message": result["message"],
+                "document_id": document_id,
+                "status": result["status"]
+            }
+
+    except Exception as e:
+        logger.error(f"Error cancelling document processing for {document_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cancel document processing: {str(e)}"
+        )
+
+
+@router.get("/cancel-status/{document_id}")
+async def get_cancel_status(document_id: str):
+    """
+    查询任务是否可以取消
+
+    Args:
+        document_id: 文档ID
+
+    Returns:
+        任务状态信息，包括是否可以取消
+    """
+    try:
+        # 从 job_status 获取任务状态
+        job_info = job_status.get(document_id)
+
+        if not job_info:
+            return {
+                "success": False,
+                "message": "任务不存在",
+                "cancellable": False
+            }
+
+        status = job_info.get("status", "unknown")
+
+        # 只有 processing 状态的任务可以取消
+        cancellable = status == "processing"
+
+        return {
+            "success": True,
+            "document_id": document_id,
+            "status": status,
+            "cancellable": cancellable,
+            "progress": job_info.get("progress", 0),
+            "message": job_info.get("message", "")
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting cancel status for {document_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cancel status: {str(e)}"
+        )
+

@@ -80,6 +80,17 @@ class JobStatusManager:
         payload.update(kwargs)
         self.update(job_id, **payload)
 
+    def mark_cancelled(self, job_id: str, **kwargs):
+        """标记任务已取消"""
+        payload = {
+            "status": "cancelled",
+            "progress": 100,
+            "message": "Task cancelled by user",
+            "cancelled_at": self._now(),
+        }
+        payload.update(kwargs)
+        self.update(job_id, **payload)
+
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         path = self._path(job_id)
         try:
