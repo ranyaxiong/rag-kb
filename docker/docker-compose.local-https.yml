@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Local HTTPS Development Environment
 # Using Nginx with mkcert certificates
 
