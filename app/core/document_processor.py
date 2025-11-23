@@ -402,7 +402,7 @@ class DocumentProcessor:
             logger.error(f"Error splitting documents: {str(e)}")
             raise
     
-    def process_document(self, file_path: str, filename: str) -> Dict[str, Any]:
+    def process_document(self, file_path: str, filename: str, cancel_checker=None) -> Dict[str, Any]:
         """处理单个文档的完整流程"""
         try:
             doc_id = str(uuid.uuid4())

@@ -81,6 +81,9 @@ class AsyncDocumentProcessor:
         if cancel_event:
             cancel_event.set()
             logger.info(f"Cancel flag set for document {document_id}")
+        
+        from app.core.job_status import job_status
+        job_status_update(document_id, status="cancelling", message="正在取消任务...")
 
         # 尝试取消 Future（如果还在队列中未开始执行）
         cancelled = future.cancel()
@@ -160,8 +163,11 @@ class AsyncDocumentProcessor:
                 }
             else:
                 result = future.result()
+                status = "completed"
+                if not result.get("success"):
+                    status = "cancelled" if result.get("cancelled") else "failed"
                 return {
-                    "status": "completed" if result.get("success") else "failed",
+                    "status": status,
                     "filename": task_info["filename"],
                     **result
                 }
@@ -226,7 +232,8 @@ class AsyncDocumentProcessor:
 
             # 处理文档
             job_status.mark_processing(document_id, progress=30, message="正在解析文档内容...")
-            result = doc_processor.process_document(real_path, filename)
+            result = doc_processor.process_document(real_path, filename,
+                                                   cancel_checker=lambda: self._check_cancelled(document_id))
 
             # 检查点 4: 文档处理后检查
             if self._check_cancelled(document_id):

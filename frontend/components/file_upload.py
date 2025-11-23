@@ -24,8 +24,9 @@ class FileUploadComponent(AutoRefreshMixin):
             st.session_state.uploading = False
 
         # 初始化当前处理的文档ID列表
-        if "processing_documents" not in st.session_state:
-            st.session_state.processing_documents = {}
+        #if "processing_documents" not in st.session_state:
+        if "upload_processing_docs" not in st.session_state:
+            st.session_state.upload_processing_docs = {}
     
     def _get_max_file_size_mb(self) -> int:
         """从后端获取允许的最大文件大小，失败回退到50MB"""
@@ -61,8 +62,8 @@ class FileUploadComponent(AutoRefreshMixin):
                 if result.get('success'):
                     st.success(f"✅ 已取消 {filename} 的处理")
                     # 从处理列表中移除
-                    if document_id in st.session_state.processing_documents:
-                        del st.session_state.processing_documents[document_id]
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
                     st.info(f"📝 {result.get('message', '任务已取消')}")
                 else:
                     st.warning(f"⚠️ {result.get('message', '无法取消任务')}")
@@ -90,21 +91,21 @@ class FileUploadComponent(AutoRefreshMixin):
                     if chunk_count > 0:
                         st.info(f"📄 文档已分割成 {chunk_count} 个块，可用于问答")
                     # 从处理列表中移除
-                    if document_id in st.session_state.processing_documents:
-                        del st.session_state.processing_documents[document_id]
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
                 elif status == 'cancelled':
                     st.warning(f"⚠️ {filename} 已被取消")
                     # 从处理列表中移除
-                    if document_id in st.session_state.processing_documents:
-                        del st.session_state.processing_documents[document_id]
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
                 elif status == 'failed':
                     err = result.get('error') or result.get('message') or '未知错误'
                     st.error(f"❌ {filename} 处理失败: {err}")
                     # 可选：显示简单建议
                     st.info("💡 建议：确认文档未加密、扫描质量清晰；如为扫描版PDF请稍后重试或压缩体积后再传。")
                     # 从处理列表中移除
-                    if document_id in st.session_state.processing_documents:
-                        del st.session_state.processing_documents[document_id]
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
                 elif status == 'processing':
                     progress = result.get('progress')
                     message = result.get('message')
@@ -129,9 +130,10 @@ class FileUploadComponent(AutoRefreshMixin):
         st.subheader("📤 上传文档")
 
         # 显示正在处理的文档
-        if st.session_state.processing_documents:
-            with st.expander(f"🔄 正在处理的文档 ({len(st.session_state.processing_documents)})", expanded=True):
-                for doc_id, doc_info in list(st.session_state.processing_documents.items()):
+        upload_docs = st.session_state.get("upload_processing_docs", {})
+        if upload_docs:
+            with st.expander(f"🔄 正在处理的文档 ({len(upload_docs)})", expanded=True):
+                for doc_id, doc_info in list(upload_docs.items()):
                     col1, col2, col3 = st.columns([3, 1, 1])
 
                     with col1:
@@ -226,7 +228,7 @@ class FileUploadComponent(AutoRefreshMixin):
 
                         # 添加到处理队列和session state
                         StateManager.add_processing_document(document_id)
-                        st.session_state.processing_documents[document_id] = {
+                        st.session_state.upload_processing_docs[document_id] = {
                             "filename": uploaded_file.name,
                             "upload_time": uploaded_file.size
                         }

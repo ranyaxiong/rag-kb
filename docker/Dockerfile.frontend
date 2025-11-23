@@ -1,5 +1,7 @@
 # 前端Dockerfile
-FROM python:3.11-slim
+FROM python:3.11
+#FROM registry.docker-cn.com/library/python:3.11-slim
+#FROM docker.mirrors.ustc.edu.cn/library/python:3.11-slim
 
 # Accelerate pip with mirror (override at build time via --build-arg)
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple

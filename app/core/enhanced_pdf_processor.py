@@ -182,7 +182,7 @@ class EnhancedPDFProcessor:
             logger.error(f"文本提取失败: {str(e)}")
             raise
     
-    def _process_with_ocr(self, file_path: str, pdf_info: Dict) -> List[Document]:
+    def _process_with_ocr(self, file_path: str, pdf_info: Dict， cancel_checker=None) -> List[Document]:
         """
         使用OCR方法处理PDF（适用于扫描类PDF）
         """
@@ -198,6 +198,12 @@ class EnhancedPDFProcessor:
             documents = []
             
             for page_num in range(len(doc)):
+                # 检查取消标志
+                if cancel_checker and cancel_checker():
+                    logger.info(f"检测到取消标志，提前结束OCR处理,OCR processing cancelled at page {page_num+1}")
+                    doc.close()
+                    raise CancellationError("Task cancelled during OCR processing")
+
                 page = doc[page_num]
                 
                 # 首先尝试提取现有文本

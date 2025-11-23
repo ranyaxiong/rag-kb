@@ -458,6 +458,12 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
                     statusDiv.innerHTML = statusText;
                     statusDiv.style.color = statusColor;
                 }}
+                else if (status === 'cancelled' || status === 'cancelling') {{
+                    isCompleted = true;
+                    eventSource.close();
+                    statusDiv.innerHTML = '❌ 任务已取消';
+                    statusDiv.style.color = '#d32f2f';
+                }}
 
             }} catch (e) {{
                 console.error('实时监控解析错误:', e);

@@ -53,7 +53,7 @@ async def upload_document_async(file: UploadFile = File(...)):
             "processing_mode": "async_thread",
             "stage": "queued"
         })
-        
+         
         # 提交到线程池（立即返回）
         async_processor.submit_task(document_id, temp_path, file.filename)
         
@@ -61,7 +61,9 @@ async def upload_document_async(file: UploadFile = File(...)):
             "success": True,
             "message": "文件上传成功，已加入处理队列",
             "document_id": document_id,
-            "status": "queued"
+            "status": "queued",
+            "processing_mode": "async",
+            "filename": file.filename
         }
         
     except Exception as e:
@@ -293,7 +295,7 @@ async def stream_processing_status(document_id: str):
                     yield f"data: {json.dumps(status)}\n\n"
 
                     # 处理完成或失败时结束流
-                    if status.get("status") in ["completed", "failed"]:
+                    if status.get("status") in ["completed", "failed", "cancelled"]:
                         break
                 else:
                     # 如果找不到状态，可能是刚提交还没开始处理，继续等待

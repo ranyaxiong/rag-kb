@@ -8,13 +8,16 @@ services:
       dockerfile: docker/Dockerfile.backend
     expose:
       - "8000"
+    ports:
+      - "5678:5678" # 调试端口
     volumes:
       - ../app:/app/app
       - ../data:/app/data
       - ../logs:/app/logs
       # Mount secrets if using Docker secrets approach
       #- ../secrets:/run/secrets:ro
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    #command: [python -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678",  "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       # Development Mode
       - DEBUG=True
@@ -43,12 +46,15 @@ services:
       dockerfile: docker/Dockerfile.frontend
     expose:
       - "8501"
+    ports:
+      - "5679:5679"
     depends_on:
       - backend
     environment:
       # Frontend accesses backend via internal network
       - BACKEND_URL=http://backend:8000
     restart: unless-stopped
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5679",  "-m", "streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
     networks:
       - rag_network
     healthcheck:
