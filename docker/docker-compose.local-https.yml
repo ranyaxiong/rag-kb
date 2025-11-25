@@ -48,13 +48,16 @@ services:
       - "8501"
     ports:
       - "5679:5679"
+    volumes:
+      - ../frontend:/app/frontend
     depends_on:
       - backend
     environment:
       # Frontend accesses backend via internal network
       - BACKEND_URL=http://backend:8000
+      - BACKEND_URL_CLIENT=https://localhost
     restart: unless-stopped
-    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5679",  "-m", "streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5679",  "-m", "streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.fileWatcherType", "poll"]
     networks:
       - rag_network
     healthcheck:
