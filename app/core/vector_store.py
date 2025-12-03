@@ -48,9 +48,11 @@ class VectorStore:
     def _ensure_initialized(self):
         """确保实例已初始化（延迟初始化）"""
         if not self._initialized:
-            self._initialize_embeddings()
-            self._initialize_vectorstore()
-            self._initialized = True
+            with self._lock: # 添加线程锁保护
+                if not self._initialized:
+                    self._initialize_embeddings()
+                    self._initialize_vectorstore()
+                    self._initialized = True
     
     def _initialize_embeddings(self):
         """初始化嵌入模型"""

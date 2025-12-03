@@ -39,7 +39,7 @@ RUN pip install --upgrade pip -i $PIP_INDEX_URL \
     && pip install -r requirements-frontend.txt -i $PIP_INDEX_URL --retries 5 --timeout 120
 
 # 复制前端代码
-COPY frontend/ .
+COPY frontend/ ./frontend/
 
 # 暴露端口
 EXPOSE 8501

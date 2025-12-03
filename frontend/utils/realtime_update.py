@@ -13,9 +13,9 @@ def setup_realtime_update_system(backend_url: str):
     """
     js_code = f"""
     <script>
-    // 实时更新系统
+    // 实时更新系统（使用相对路径，避免 HTTPS 环境下的混合内容问题）
     window.RagRealtimeUpdater = {{
-        backendUrl: '{backend_url}',
+        backendUrl: '',
 
         // 更新统计信息
         async updateStats() {{
@@ -423,6 +423,12 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
                     eventSource.close();
                     {completion_action}
 
+                }} else if (status === 'cancelled' || status === 'cancelling') {{
+                    isCompleted = true;
+                    eventSource.close();
+                    statusDiv.innerHTML = '🛑 任务已取消';
+                    statusDiv.style.color = '#f57c00';
+
                 }} else if (status === 'failed') {{
                     isCompleted = true;
                     eventSource.close();
@@ -457,12 +463,6 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
 
                     statusDiv.innerHTML = statusText;
                     statusDiv.style.color = statusColor;
-                }}
-                else if (status === 'cancelled' || status === 'cancelling') {{
-                    isCompleted = true;
-                    eventSource.close();
-                    statusDiv.innerHTML = '❌ 任务已取消';
-                    statusDiv.style.color = '#d32f2f';
                 }}
 
             }} catch (e) {{

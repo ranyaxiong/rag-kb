@@ -478,7 +478,7 @@ def main():
     load_user_settings()
 
     # 页面标题
-    st.title("📚 RAG知识库系")
+    st.title("📚 RAG知识库系统测试")
     st.markdown("---")
 
     # 检查后端连接
@@ -487,37 +487,7 @@ def main():
         st.info(f"服务器端后端地址: {BACKEND_URL_INTERNAL}")
         st.info(f"浏览器端后端地址: {BACKEND_URL_CLIENT}")
         st.stop()
-    # --- Plan A: 原生轮询 + 智能降频（有任务时短周期自动重跑）---
-    try:
-        StateManager.init_state()
-        processing_docs = list(StateManager.get_processing_documents())
-        if processing_docs:
-            # 轮询每个进行中的文档状态，完成即从列表移除
-            finished_ids: list[str] = []
-            for _doc_id in list(processing_docs):
-                try:
-                    resp = requests.get(
-                        f"{BACKEND_URL_INTERNAL}/api/documents/status/{_doc_id}", timeout=4
-                    )
-                    if resp.status_code == 200:
-                        status = (resp.json() or {}).get("status")
-                        if status in ("completed", "failed", "timeout"):
-                            StateManager.remove_processing_document(_doc_id)
-                            finished_ids.append(_doc_id)
-                except Exception:
-                    # 网络错误时忽略，下一轮再查
-                    pass
-
-            remaining = len(StateManager.get_processing_documents())
-            # 只要还有任务或刚有任务完成，就触发一次短周期自动刷新
-            if remaining > 0 or finished_ids:
-                st.caption(f"🔄 正在处理 {remaining} 个文档… 页面将自动更新。")
-                time.sleep(2)  # 轻量降频：2s/次
-                st.rerun()
-    except Exception:
-        pass
-
-
+    
     # 侧边栏 - 模型与文档管理
     with st.sidebar:
         # 在侧边栏顶部显示版本信息
@@ -650,6 +620,43 @@ def main():
             BACKEND_URL_CLIENT
         )
         file_upload_component.render()
+    # --- Plan A: 原生轮询 + 智能降频（有任务时短周期自动重跑）---
+    # try:
+    #     StateManager.init_state()
+    #     processing_docs = list(StateManager.get_processing_documents())
+    #     if processing_docs:
+    #         # 轮询每个进行中的文档状态，完成即从列表移除
+    #         finished_ids: list[str] = []
+    #         for _doc_id in list(processing_docs):
+    #             try:
+    #                 resp = requests.get(
+    #                     f"{BACKEND_URL_INTERNAL}/api/documents/status/{_doc_id}", timeout=4
+    #                 )
+    #                 if resp.status_code == 200:
+    #                     data = resp.json() or {}
+    #                     status = data.get("status")
+    #                     # 将取消相关状态也视为已结束，以避免页面反复刷新造成闪烁
+    #                     if status in ("completed", "failed", "timeout", "cancelled", "cancelling", "not found"):
+    #                         StateManager.remove_processing_document(_doc_id)
+    #                 elif resp.status_code == 404:  
+    #                     StateManager.remove_processing_document(_doc_id)
+    #                 else:
+    #                     # 其他错误，忽略
+    #                     pass
+    #             except Exception:
+    #                 # 网络错误时忽略，下一轮再查
+    #                 pass
+
+    #         remaining = len(StateManager.get_processing_documents())
+    #         # 只有仍有真正进行中的任务时才短周期刷新，避免取消后闪烁
+    #         if remaining > 0:
+    #             st.caption(f"🔄 正在处理 {remaining} 个文档… 页面将自动更新。")
+    #             time.sleep(2)  # 轻量降频：2s/次
+    #             st.rerun()
+    # except Exception:
+    #     pass
+
+
 
         st.markdown("---")
 

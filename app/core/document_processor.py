@@ -4,7 +4,7 @@
 import os
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Callable
 import logging
 import shutil
 
@@ -198,8 +198,12 @@ class SmartPDFLoader:
             logger.warning(f"EnhancedPDFProcessor unavailable, fallback to PyPDFLoader: {e}")
             self.enhanced_processor = None
         
-    def load(self) -> List[Document]:
-        """加载PDF文档，智能选择处理方法"""
+    def load(self, cancel_checker: Optional[Callable[[], bool]] = None) -> List[Document]:
+        """加载PDF文档，智能选择处理方法
+        
+        Args:
+            cancel_checker: 取消检查函数，返回True表示需要取消
+        """
         try:
             # 检查是否可以使用增强处理器
             processing_info = None
@@ -209,7 +213,7 @@ class SmartPDFLoader:
             # 使用增强处理器
             if self.enhanced_processor is not None:
                 try:
-                    documents = self.enhanced_processor.load(self.file_path)
+                    documents = self.enhanced_processor.load(self.file_path, cancel_checker)
                     if documents and any(doc.page_content.strip() for doc in documents):
                         logger.info(f"使用增强PDF处理器成功处理: {self.file_path}")
                         return documents
@@ -365,8 +369,13 @@ class DocumentProcessor:
         except Exception:
             return False
     
-    def load_document(self, file_path: str) -> List[Document]:
-        """加载文档内容"""
+    def load_document(self, file_path: str, cancel_checker: Optional[Callable[[], bool]] = None) -> List[Document]:
+        """加载文档内容
+        
+        Args:
+            file_path: 文件路径
+            cancel_checker: 取消检查函数，返回True表示需要取消
+        """
         try:
             _, ext = os.path.splitext(file_path.lower())
             
@@ -376,7 +385,11 @@ class DocumentProcessor:
             loader_class = self.loaders[ext]
             loader = loader_class(file_path)
             
-            documents = loader.load()
+            # 如果是SmartPDFLoader，传递cancel_checker
+            if isinstance(loader, SmartPDFLoader) and cancel_checker:
+                documents = loader.load(cancel_checker)
+            else:
+                documents = loader.load()
             logger.info(f"Loaded {len(documents)} document(s) from {file_path}")
             
             return documents
@@ -402,13 +415,19 @@ class DocumentProcessor:
             logger.error(f"Error splitting documents: {str(e)}")
             raise
     
-    def process_document(self, file_path: str, filename: str, cancel_checker=None) -> Dict[str, Any]:
-        """处理单个文档的完整流程"""
+    def process_document(self, file_path: str, filename: str, cancel_checker: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
+        """处理单个文档的完整流程
+        
+        Args:
+            file_path: 文件路径
+            filename: 文件名
+            cancel_checker: 取消检查函数，返回True表示需要取消
+        """
         try:
             doc_id = str(uuid.uuid4())
             
             # 加载文档
-            documents = self.load_document(file_path)
+            documents = self.load_document(file_path, cancel_checker)
             
             # 添加文档元数据
             for doc in documents:

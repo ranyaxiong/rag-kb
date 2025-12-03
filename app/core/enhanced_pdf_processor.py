@@ -5,16 +5,21 @@
 import os
 import io
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from langchain_core.documents import Document
 import fitz  # PyMuPDF
 
+from app.core.exceptions import CancellationError
+
 logger = logging.getLogger(__name__)
+
+# 单次 OCR 尝试的超时（秒），避免长时间卡住导致无法及时响应取消
+OCR_ATTEMPT_TIMEOUT_SEC = 10
 
 
 class EnhancedPDFProcessor:
     """增强的PDF处理器类"""
-    
+
     def __init__(self):
         self.ocr_available = self._check_ocr_availability()
         self.image_extraction_available = self._check_image_extraction_availability()
@@ -43,9 +48,13 @@ class EnhancedPDFProcessor:
             logger.warning("图像处理功能不可用，请安装: pip install pillow")
             return False
     
-    def load(self, file_path: str) -> List[Document]:
+    def load(self, file_path: str, cancel_checker: Optional[Callable[[], bool]] = None) -> List[Document]:
         """
         加载PDF文档，自动选择最佳处理策略
+        
+        Args:
+            file_path: PDF文件路径
+            cancel_checker: 取消检查函数，返回True表示需要取消
         """
         try:
             # 分析PDF特性
@@ -57,18 +66,18 @@ class EnhancedPDFProcessor:
             
             if pdf_info['is_scanned'] or pdf_info['low_text_ratio']:
                 logger.info("检测到扫描类PDF或低文本比例，尝试OCR处理")
-                documents = self._process_with_ocr(file_path, pdf_info)
+                documents = self._process_with_ocr(file_path, pdf_info, cancel_checker)
             else:
                 logger.info("检测到文本类PDF，使用标准文本提取")
-                documents = self._process_with_text_extraction(file_path, pdf_info)
-            
+                documents = self._process_with_text_extraction(file_path, pdf_info, cancel_checker)
+
             # 如果主要方法失败，尝试备用方法
             if not documents or all(not doc.page_content.strip() for doc in documents):
                 logger.warning("主要方法提取失败，尝试备用方法")
                 if pdf_info['is_scanned']:
-                    documents = self._process_with_text_extraction(file_path, pdf_info)
+                    documents = self._process_with_text_extraction(file_path, pdf_info, cancel_checker)
                 else:
-                    documents = self._process_with_ocr(file_path, pdf_info)
+                    documents = self._process_with_ocr(file_path, pdf_info, cancel_checker)
             
             return documents
             
@@ -146,22 +155,27 @@ class EnhancedPDFProcessor:
                 'low_text_ratio': True
             }
     
-    def _process_with_text_extraction(self, file_path: str, pdf_info: Dict) -> List[Document]:
+    def _process_with_text_extraction(self, file_path: str, pdf_info: Dict, cancel_checker: Optional[Callable[[], bool]] = None) -> List[Document]:
         """
         使用文本提取方法处理PDF
         """
         try:
             doc = fitz.open(file_path)
             documents = []
-            
+
             for page_num in range(len(doc)):
+                # 支持快速取消
+                if cancel_checker and cancel_checker():
+                    doc.close()
+                    raise CancellationError(f"任务在文本提取第{page_num+1}页时被用户取消")
+
                 page = doc[page_num]
                 text = page.get_text()
-                
+
                 if text.strip():  # 只处理有文本的页面
                     # 清理和格式化文本
                     cleaned_text = self._clean_text(text)
-                    
+
                     if len(cleaned_text.strip()) > 10:  # 降低过滤阈值
                         document = Document(
                             page_content=cleaned_text,
@@ -173,18 +187,23 @@ class EnhancedPDFProcessor:
                             }
                         )
                         documents.append(document)
-            
+
             doc.close()
             logger.info(f"文本提取完成: {len(documents)} 页")
             return documents
-            
+
         except Exception as e:
             logger.error(f"文本提取失败: {str(e)}")
             raise
     
-    def _process_with_ocr(self, file_path: str, pdf_info: Dict， cancel_checker=None) -> List[Document]:
+    def _process_with_ocr(self, file_path: str, pdf_info: Dict, cancel_checker: Optional[Callable[[], bool]] = None) -> List[Document]:
         """
         使用OCR方法处理PDF（适用于扫描类PDF）
+        
+        Args:
+            file_path: PDF文件路径
+            pdf_info: PDF分析信息
+            cancel_checker: 取消检查函数，返回True表示需要取消
         """
         if not self.ocr_available:
             logger.warning("OCR功能不可用，回退到文本提取")
@@ -200,9 +219,9 @@ class EnhancedPDFProcessor:
             for page_num in range(len(doc)):
                 # 检查取消标志
                 if cancel_checker and cancel_checker():
-                    logger.info(f"检测到取消标志，提前结束OCR处理,OCR processing cancelled at page {page_num+1}")
+                    logger.info(f"OCR处理在第{page_num+1}页被取消")
                     doc.close()
-                    raise CancellationError("Task cancelled during OCR processing")
+                    raise CancellationError(f"任务在OCR处理第{page_num+1}页时被用户取消")
 
                 page = doc[page_num]
                 
@@ -213,30 +232,50 @@ class EnhancedPDFProcessor:
                 ocr_text = ""
                 cleaned_text = ""
                 for zoom in (3.0, 4.0):
+                    # 取消检查：每个放大步开始前
+                    if cancel_checker and cancel_checker():
+                        doc.close()
+                        raise CancellationError(f"任务在OCR放大处理阶段被用户取消 (zoom={zoom})")
+
                     # 将页面转换为灰度图像（alpha关闭以减少噪声与体积）
                     mat = fitz.Matrix(zoom, zoom)
+
+                    # 取消检查：渲染前
+                    if cancel_checker and cancel_checker():
+                        doc.close()
+                        raise CancellationError(f"任务在OCR图像渲染前被用户取消 (zoom={zoom})")
+
                     pix = page.get_pixmap(matrix=mat, colorspace=fitz.csGRAY, alpha=False)
                     img_data = pix.tobytes("png")
-                    
+
                     # 使用PIL打开图像
                     image = Image.open(io.BytesIO(img_data))
-                    
+
+                    # 取消检查：打开图像后、预处理前
+                    if cancel_checker and cancel_checker():
+                        try:
+                            image.close()
+                        except Exception:
+                            pass
+                        doc.close()
+                        raise CancellationError(f"任务在OCR图像预处理前被用户取消 (zoom={zoom})")
+
                     # 图像预处理以提高OCR质量
                     image = self._preprocess_image_for_ocr(image)
-                    
-                    # OCR处理（多种策略尝试）
-                    ocr_text = self._perform_ocr_with_fallback(image)
-                    
+
+                    # OCR处理（多种策略尝试），传入取消检查以支持快速停止
+                    ocr_text = self._perform_ocr_with_fallback(image, cancel_checker)
+
                     # 合并现有文本和OCR文本
                     combined_text = self._combine_texts(existing_text, ocr_text)
                     cleaned_text = self._clean_text(combined_text)
-                    
+
                     # 资源清理
                     try:
                         image.close()
                     except Exception:
                         pass
-                    
+
                     # 如果获得了足够的文本，则不再提升分辨率
                     if len(cleaned_text.strip()) >= 80:
                         break
@@ -393,12 +432,12 @@ class EnhancedPDFProcessor:
             logger.warning(f"图像预处理失败，使用原图: {str(e)}")
             return image
     
-    def _perform_ocr_with_fallback(self, image):
+    def _perform_ocr_with_fallback(self, image, cancel_checker: Optional[Callable[[], bool]] = None):
         """
         使用多种OCR配置尝试识别
         """
         import pytesseract
-        
+
         # 构造语言序列（根据已安装语言动态调整）
         langs = []
         try:
@@ -417,15 +456,20 @@ class EnhancedPDFProcessor:
 
         best_text = ""
         best_length = 0
-        
+
         for lang in langs:
             for psm in psms:
+                # 支持在尝试之间快速取消
+                if cancel_checker and cancel_checker():
+                    raise CancellationError("任务在OCR内部尝试阶段被取消")
                 config = f"--psm {psm} --oem 3"
                 try:
+                    # 为单次 OCR 尝试设置超时，避免阻塞导致无法及时取消
                     ocr_text = pytesseract.image_to_string(
                         image,
                         lang=lang,
-                        config=config
+                        config=config,
+                        timeout=OCR_ATTEMPT_TIMEOUT_SEC
                     )
                     current = len(ocr_text.strip())
                     if current > best_length:
@@ -436,9 +480,9 @@ class EnhancedPDFProcessor:
                         logger.info(f"最佳OCR结果长度: {best_length} (lang={lang}, psm={psm})")
                         return best_text
                 except Exception as e:
-                    logger.debug(f"OCR失败 lang={lang}, psm={psm}: {str(e)}")
+                    logger.debug(f"OCR失败或超时 lang={lang}, psm={psm}: {str(e)}")
                     continue
-        
+
         logger.info(f"最佳OCR结果长度: {best_length}")
         return best_text
 

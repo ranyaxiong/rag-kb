@@ -39,10 +39,30 @@ def get_vector_store():
 async def upload_document_async(file: UploadFile = File(...)):
     """真正的异步上传（线程池版本）"""
     try:
-        # 验证文件...
+        # 检查文件类型
+        if not doc_processor.is_supported_file(file.filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
+            )
         
-        # 保存到临时目录
+        # 检查文件大小
         file_content = await file.read()
+        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+        if len(file_content) > max_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
+            )
+        
+        # 高效重复检查（按文件名）
+        if get_vector_store().document_exists_by_filename(file.filename):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+            )
+        # 保存到临时目录
+        #file_content = await file.read()
         temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
         
         # 生成文档ID
@@ -269,8 +289,11 @@ async def get_processing_status(document_id: str):
         # 回退到job_status检查
         status_info = job_status.get_job_status(document_id)
         if not status_info:
-            raise HTTPException(status_code=404, detail="Document not found")
-            
+          #  raise HTTPException(status_code=404, detail="Document not found")
+            return {"status": "not found",
+            "message": "Document not found",
+            "document_id": document_id,
+            } 
         return status_info
         
     except Exception as e:
@@ -294,8 +317,8 @@ async def stream_processing_status(document_id: str):
                 if status:
                     yield f"data: {json.dumps(status)}\n\n"
 
-                    # 处理完成或失败时结束流
-                    if status.get("status") in ["completed", "failed", "cancelled"]:
+                    # 处理完成、失败或取消中时结束流（取消请求已发出即可结束SSE，避免前端长连接导致闪烁）
+                    if status.get("status") in ["completed", "failed", "cancelled", "cancelling"]:
                         break
                 else:
                     # 如果找不到状态，可能是刚提交还没开始处理，继续等待

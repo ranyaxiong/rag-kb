@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import logging
 
+from app.core.exceptions import CancellationError
+
 logger = logging.getLogger(__name__)
 
 class AsyncDocumentProcessor:
@@ -82,9 +84,10 @@ class AsyncDocumentProcessor:
             cancel_event.set()
             logger.info(f"Cancel flag set for document {document_id}")
         
+        # 立即更新状态为 cancelling，让 SSE 监控器知道任务正在取消
         from app.core.job_status import job_status
-        job_status_update(document_id, status="cancelling", message="正在取消任务...")
-
+        job_status.update(document_id, status="cancelling", message="正在取消任务...")
+        
         # 尝试取消 Future（如果还在队列中未开始执行）
         cancelled = future.cancel()
 
@@ -112,13 +115,24 @@ class AsyncDocumentProcessor:
             }
 
     def _check_cancelled(self, document_id: str) -> bool:
-        """检查任务是否被取消"""
+        """检查任务是否被取消（多通道检查：事件标志 + job_status）"""
         with self._lock:
             cancel_event = self._cancel_flags.get(document_id)
 
         if cancel_event and cancel_event.is_set():
             logger.info(f"Task {document_id} detected cancellation flag")
             return True
+
+        # 兜底：读取持久化 job_status，若为 cancelling/cancelled 也视为已取消
+        try:
+            from app.core.job_status import job_status
+            js = job_status.get(document_id) or {}
+            st = (js.get("status") or "").lower()
+            if st in ("cancelling", "cancelled"):
+                logger.info(f"Task {document_id} detected job_status={st}")
+                return True
+        except Exception:
+            pass
         return False
 
     def _cleanup_task_files(self, document_id: str, task_info: Dict[str, Any]):
@@ -172,6 +186,13 @@ class AsyncDocumentProcessor:
                     **result
                 }
         else:
+            # 若取消标志已设置，显式返回取消中，避免前端将其视为进行中而反复刷新
+            if self._check_cancelled(document_id):
+                return {
+                    "status": "cancelling",
+                    "filename": task_info["filename"],
+                    "submitted_at": task_info["submitted_at"]
+                }
             return {
                 "status": "processing",
                 "filename": task_info["filename"],
@@ -230,10 +251,13 @@ class AsyncDocumentProcessor:
                 job_status.mark_cancelled(document_id, filename=filename)
                 return {"success": False, "error": "Task cancelled by user", "cancelled": True}
 
-            # 处理文档
+            # 处理文档，传递取消检查函数
             job_status.mark_processing(document_id, progress=30, message="正在解析文档内容...")
-            result = doc_processor.process_document(real_path, filename,
-                                                   cancel_checker=lambda: self._check_cancelled(document_id))
+            result = doc_processor.process_document(
+                real_path, 
+                filename,
+                cancel_checker=lambda: self._check_cancelled(document_id)
+            )
 
             # 检查点 4: 文档处理后检查
             if self._check_cancelled(document_id):
@@ -295,6 +319,15 @@ class AsyncDocumentProcessor:
                 job_status.mark_failed(document_id, error=error_msg, filename=filename)
                 return {"success": False, "error": error_msg}
 
+        except CancellationError as e:
+            # 处理取消异常
+            logger.info(f"Document processing cancelled for {filename}: {str(e)}")
+            from app.core.job_status import job_status
+            with self._lock:
+                task_info = self.tasks.get(document_id, {})
+            self._cleanup_task_files(document_id, task_info)
+            job_status.mark_cancelled(document_id, filename=filename)
+            return {"success": False, "error": str(e), "cancelled": True}
         except Exception as e:
             logger.error(f"Document processing failed for {filename}: {str(e)}")
             from app.core.job_status import job_status

@@ -27,6 +27,12 @@ class FileUploadComponent(AutoRefreshMixin):
         #if "processing_documents" not in st.session_state:
         if "upload_processing_docs" not in st.session_state:
             st.session_state.upload_processing_docs = {}
+
+        # 单文件，批量上传控件的key， 用于上传成功后重建组件以清空选择
+        if "single_file_upload_key" not in st.session_state:
+            st.session_state.single_file_upload_key = 0
+        if "multiple_files_upload_key" not in st.session_state:
+            st.session_state.multiple_files_upload_key = 0
     
     def _get_max_file_size_mb(self) -> int:
         """从后端获取允许的最大文件大小，失败回退到50MB"""
@@ -50,28 +56,85 @@ class FileUploadComponent(AutoRefreshMixin):
             return 300
     
     def _cancel_processing(self, document_id: str, filename: str):
-        """取消文档处理"""
+        """取消文档处理（服务端请求 + 浏览器兜底请求）"""
+        # === 临时调试开始 ===
+        #st.warning(f"[DEBUG] 点击取消: {document_id} - {filename}")
+        # === 临时调试结束 ===
+        # 先查询任务当前是否仍可取消
+        try:
+            status_resp = requests.get(
+                f"{self.backend_url}/api/documents/cancel-status/{document_id}",
+                timeout=5,
+            )
+            if status_resp.status_code == 200:
+                status_data = status_resp.json()
+                cancellable = status_data.get("cancellable", False)
+                current_status = status_data.get("status", "unknown")
+
+                if not cancellable:
+                    # 本地清理，避免列表中继续显示
+                    try:
+                        StateManager.remove_processing_document(document_id)
+                    except Exception:
+                        pass
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
+
+                    if current_status in ("completed", "cancelled"):
+                        st.info(f"ℹ️ {filename} 已处理完成或已取消，无需再次取消。")
+                    else:
+                        st.info(f"ℹ️ 当前任务状态为 {current_status}，暂不可取消。")
+                    return
+        except Exception:
+            # 查询失败时，不阻止后续的取消请求，按原逻辑继续
+            pass
+
+        server_ok = False
         try:
             response = requests.post(
                 f"{self.backend_url}/api/documents/cancel/{document_id}",
-                timeout=10
+                timeout=5
             )
+            if response.status_code == 200 and (response.json() or {}).get('success'):
+                server_ok = True
+        except Exception:
+            server_ok = False
 
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('success'):
-                    st.success(f"✅ 已取消 {filename} 的处理")
-                    # 从处理列表中移除
-                    if document_id in st.session_state.upload_processing_docs:
-                        del st.session_state.upload_processing_docs[document_id]
-                    st.info(f"📝 {result.get('message', '任务已取消')}")
-                else:
-                    st.warning(f"⚠️ {result.get('message', '无法取消任务')}")
-            else:
-                st.error(f"❌ 取消失败: {response.text}")
+        if not server_ok:
+            # 兜底：让浏览器直接调用后端（解决容器内 DNS/HTTP 问题）
+            try:
+                st.components.v1.html(
+                    f"""
+                    <script>
+                    (async function() {{
+                      try {{
+                        const resp = await fetch('{self.client_url}/api/documents/cancel/{document_id}', {{
+                          method: 'POST',
+                          credentials: 'include'
+                        }});
+                        console.log('Browser cancel resp status:', resp.status);
+                      }} catch (e) {{ console.error('Browser cancel failed', e); }}
+                    }})();
+                    </script>
+                    """,
+                    height=0,
+                    width=0
+                )
+            except Exception:
+                pass
 
-        except Exception as e:
-            st.error(f"❌ 取消任务时出错: {str(e)}")
+        # 无论服务端是否成功，先本地清理，避免继续轮询造成闪烁
+        try:
+            StateManager.remove_processing_document(document_id)
+        except Exception:
+            pass
+        if document_id in st.session_state.upload_processing_docs:
+            del st.session_state.upload_processing_docs[document_id]
+
+        if server_ok:
+            st.success(f"✅ 已取消 {filename} 的处理")
+        else:
+            st.info(f"📝 已尝试发送取消请求：{filename} （如任务已完成，将自动从列表中消失）")
 
     def _check_processing_status(self, document_id: str, filename: str):
         """检查文档处理状态"""
@@ -124,10 +187,47 @@ class FileUploadComponent(AutoRefreshMixin):
         except Exception as e:
             st.error(f"❌ 查询状态时出错: {str(e)}")
     
+
+    def _cleanup_finished_docs(self):
+        """清理已经完成/失败/取消的任务，避免一直留在列表里"""
+        upload_docs = st.session_state.get("upload_processing_docs", {})
+        if not upload_docs:
+            return
+
+        to_remove = []
+
+        for doc_id, doc_info in list(upload_docs.items()):
+            try:
+                resp = requests.get(
+                    f"{self.backend_url}/api/documents/status/{doc_id}",
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    status = (data.get("status") or "").lower()
+                    # 后端可能返回: completed / failed / cancelled / not found 等
+                    if status in ("completed", "failed", "cancelled", "not found", "timeout", "error"):
+                        to_remove.append(doc_id)
+                elif resp.status_code == 404:
+                    to_remove.append(doc_id)
+            except Exception:
+                # 查询失败时不做强制删除，等下次再清理
+                continue
+
+        for doc_id in to_remove:
+            if doc_id in st.session_state.upload_processing_docs:
+                del st.session_state.upload_processing_docs[doc_id]
+            try:
+                StateManager.remove_processing_document(doc_id)
+            except Exception:
+                pass
+
     def render(self):
         """渲染文件上传界面"""
 
         st.subheader("📤 上传文档")
+        # 渲染前先清理掉已完成的任务
+        self._cleanup_finished_docs()
 
         # 显示正在处理的文档
         upload_docs = st.session_state.get("upload_processing_docs", {})
@@ -159,7 +259,8 @@ class FileUploadComponent(AutoRefreshMixin):
         uploaded_file = st.file_uploader(
             "选择文件",
             type=["pdf", "docx", "doc", "txt", "md"],
-            help="支持PDF、Word、文本和Markdown文件"
+            help="支持PDF、Word、文本和Markdown文件",
+            key=f"single_file_upload_key_{st.session_state.single_file_upload_key}"
         )
         
         if uploaded_file is not None:
@@ -180,7 +281,8 @@ class FileUploadComponent(AutoRefreshMixin):
             "选择多个文件",
             type=["pdf", "docx", "doc", "txt", "md"],
             accept_multiple_files=True,
-            help="可以同时选择多个文件进行批量上传"
+            help="可以同时选择多个文件进行批量上传",
+            key=f"multiple_files_upload_key_{st.session_state.multiple_files_upload_key}"
         )
         
         if uploaded_files:
@@ -196,6 +298,7 @@ class FileUploadComponent(AutoRefreshMixin):
         """上传单个文件"""
         try:
             # 设置上传状态
+            reset_uploader = False
             st.session_state.uploading = True
             
             # 读取后端限制，超限则提前失败，避免长时间等待
@@ -279,14 +382,16 @@ class FileUploadComponent(AutoRefreshMixin):
                             st.components.v1.html(monitor_html, height=90)
                     if result.get('filename'):
                         st.code(f"文件名: {result['filename']}")
+                    # 上传/排队成功后，重置单文件上传控件
+                    reset_uploader = True
                 elif response.status_code == 409:
-                    # 处理重复文件错误
                     error_detail = response.json().get("detail", "文件已存在")
                     st.warning(f"⚠️ {error_detail}")
+                    reset_uploader = True
                 else:
                     error_detail = response.json().get("detail", "未知错误")
                     st.error(f"❌ 上传失败: {error_detail}")
-                    
+
         except requests.exceptions.Timeout:
             st.error("❌ 上传超时：文件较大或网络较慢。建议压缩文件、改为批量上传（超时更长），或稍后重试。")
         except Exception as e:
@@ -294,6 +399,9 @@ class FileUploadComponent(AutoRefreshMixin):
         finally:
             # 重置上传状态
             st.session_state.uploading = False
+            # 根据需要重置上传控件
+            if reset_uploader:
+                st.session_state.single_file_upload_key += 1
     
     def _upload_multiple_files(self, uploaded_files: List):
         """批量上传文件"""
