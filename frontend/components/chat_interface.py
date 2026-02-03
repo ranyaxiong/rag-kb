@@ -61,15 +61,53 @@ class ChatInterface:
                         self._render_sources(message["sources"])
     
     def _render_sources(self, sources):
-        """渲染来源文档"""
+        """渲染来源文档 - 优化为卡片式设计"""
         if sources:
-            with st.expander("📖 相关文档", expanded=False):
+            with st.expander("📚 参考来源", expanded=True):
                 for i, source in enumerate(sources, 1):
-                    st.write(f"**来源 {i}: {source['document_name']}**")
-                    st.write(f"相关内容: {source['content']}")
-                    if source.get('page_number'):
-                        st.write(f"页码: {source['page_number']}")
-                    st.markdown("---")
+                    # 使用容器创建卡片效果
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+                            border-left: 4px solid #667eea;
+                            padding: 12px 16px;
+                            border-radius: 8px;
+                            margin-bottom: 12px;
+                        ">
+                            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                                <span style="
+                                    background: #667eea;
+                                    color: white;
+                                    width: 24px;
+                                    height: 24px;
+                                    border-radius: 50%;
+                                    display: inline-flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    font-weight: bold;
+                                    font-size: 12px;
+                                    margin-right: 10px;
+                                ">{i}</span>
+                                <strong style="color: #667eea;">{source['document_name']}</strong>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 内容预览
+                        content_preview = source['content'][:200] + "..." if len(source['content']) > 200 else source['content']
+                        st.markdown(f"<div style='padding-left: 34px; color: #666; font-size: 0.9em;'>{content_preview}</div>", unsafe_allow_html=True)
+
+                        # 元数据
+                        if source.get('page_number'):
+                            st.caption(f"📄 页码: {source['page_number']}")
+
+                        # 查看完整内容
+                        if len(source['content']) > 200:
+                            with st.expander("查看完整内容", expanded=False):
+                                st.text(source['content'])
+
+                        st.markdown("<br>", unsafe_allow_html=True)
     
     def _render_suggestions(self):
         """渲染问题建议"""
