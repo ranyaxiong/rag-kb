@@ -14,6 +14,9 @@ venv.bak/
 # Environment variables
 .env
 .env.local
+.env.production
+.env.dev
+.env.local-https
 
 # Data directories
 data/uploads/*
@@ -52,7 +55,7 @@ dist/
 # Docker
 .dockerignorevscode-file://vscode-app/c:/Users/ryx-9/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html
 docker/docker-compose.secrets.yml
-
+docker/nginx/conf.d/production.conf
 # md
 ADMIN_BUTTON_TEST_REPORT.md
 STREAMLIT_VERSION_VERIFICATION.md
