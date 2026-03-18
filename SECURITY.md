@@ -220,7 +220,8 @@ cp .env.template .env
 
 **生产部署:**
 ```bash
-cp .env.production .env
+cp .env.production.template .env
+# 或直接维护 .env.production 供 docker-compose.production.yml 使用
 # 编辑 ALLOWED_ORIGINS 为你的域名
 # 确保 DEBUG=False
 ```

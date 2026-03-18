@@ -4,8 +4,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     volumes:
       - ../data:/app/data
       - ../logs:/app/logs
@@ -17,15 +17,13 @@ services:
       - CHROMA_DB_PATH=/app/data/chroma_db
       - UPLOAD_DIR=/app/data/uploads
       
-      # 安全配置
-      - DEBUG=False
-      
+     
       # CORS配置（生产环境需要指定具体域名）
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8501}
-      - ALLOWED_METHODS=${ALLOWED_METHODS:-GET,POST,DELETE}
-      - ALLOWED_HEADERS=${ALLOWED_HEADERS:-Content-Type,Authorization}
-    env_file:
-      - ../.env
+      
+      
+      - ALLOWED_HEADERS=Content-Type,Authorization,LLM-API-Key,LLM-Provider,LLM-Base-URL,LLM-Model,Cache-Control,Connection
+      - ALLOWED_METHODS=GET,POST,DELETE,PUT,OPTIONS
+    
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -38,8 +36,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-    ports:
-      - "8501:8501"
+    expose:
+      - "8501"
     depends_on:
       - backend
     environment:
@@ -51,11 +49,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-volumes:
-  app_data:
-    driver: local
-
-networks:
-  default:
-    driver: bridge

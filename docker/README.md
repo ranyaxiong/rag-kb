@@ -72,7 +72,7 @@ make dev-https
 ```bash
 # 1. 在云厂商控制台申请 SSL 证书
 # 2. 配置负载均衡器 HTTPS 监听
-# 3. 更新 .env.production
+# 3. 如需新建生产配置，可由 .env.production.template 复制为 .env.production
 ALLOWED_ORIGINS=https://yourdomain.com
 DEBUG=False
 
@@ -175,7 +175,7 @@ make setup-production-https
 ## 🔐 安全配置
 
 ### 环境变量
-创建 `.env` 文件（开发环境）或 `.env.production`（生产环境）：
+创建 `.env` 文件（开发环境）、`.env.production.template`（生产模板）或 `.env.production`（生产实际配置）：
 
 ```bash
 # API配置（使用安全方式）

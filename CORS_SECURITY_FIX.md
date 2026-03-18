@@ -17,7 +17,7 @@
 
 ### 3. 配置模板
 - ✅ 创建 `.env.template` - 开发环境配置模板
-- ✅ 创建 `.env.production` - 生产环境配置模板
+- ✅ 创建 `.env.production.template` - 生产环境配置模板
 - ✅ 更新 Docker Compose 配置支持CORS环境变量
 
 ### 4. 工具脚本

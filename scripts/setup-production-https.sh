@@ -107,7 +107,7 @@ case $choice in
     echo "   - 前端监听：HTTPS:443 -> 后端转发：HTTP:80"
     echo ""
     echo "3. 更新应用配置"
-    echo "   编辑 .env.production 文件："
+    echo "   如需新建配置，可先复制 .env.production.template 为 .env.production 后再编辑："
     echo "   ALLOWED_ORIGINS=https://$domain,https://www.$domain"
     echo "   DEBUG=False"
     echo ""
@@ -180,33 +180,12 @@ echo "========================================="
 echo "🔐 通用配置（所有方案适用）"
 echo "========================================="
 echo ""
-echo "1. 创建生产环境配置文件"
+echo "1. 创建生产环境配置文件（基于模板）"
 if [ ! -f .env.production ]; then
-    cat > .env.production << EOF
-# Production Environment Configuration
-
-# CORS Configuration - IMPORTANT: Update to your domain
-ALLOWED_ORIGINS=https://$domain,https://www.$domain
-ALLOWED_METHODS=GET,POST,DELETE,PUT,OPTIONS
-ALLOWED_HEADERS=Content-Type,Authorization,LLM-API-Key,LLM-Provider,LLM-Base-URL,LLM-Model,Cache-Control,Connection
-
-# Security
-DEBUG=False
-
-# API Key (Use secure method to set this)
-# OPENAI_API_KEY=your-key-here
-# Or use environment variables / Docker secrets
-
-# Model Configuration
-LLM_PROVIDER=openai
-CHAT_MODEL=gpt-3.5-turbo
-EMBEDDING_MODEL=text-embedding-ada-002
-
-# Quota Management
-ENABLE_QUOTA_LIMIT=True
-DEFAULT_DAILY_QUOTA=5
-EOF
-    echo "   ✓ .env.production 已创建"
+    cp .env.production.template .env.production
+    sed -i "s|https://yourdomain.com|https://$domain|g" .env.production
+    sed -i "s|https://www.yourdomain.com|https://www.$domain|g" .env.production
+    echo "   ✓ 已基于 .env.production.template 创建 .env.production"
 else
     echo "   ℹ️  .env.production 已存在，请手动更新"
 fi

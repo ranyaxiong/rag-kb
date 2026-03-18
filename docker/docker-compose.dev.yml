@@ -1,28 +1,20 @@
 services:
   backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.backend
+    
     ports:
       - "8000:8000"
     volumes:
       - ../app:/app/app  # 挂载源代码，支持热重载
       - ../data:/app/data
       - ../logs:/app/logs
-    environment:
-      - CHROMA_DB_PATH=/app/data/chroma_db
-      - UPLOAD_DIR=/app/data/uploads
-      - DEBUG=True
-      - SIMILARITY_THRESHOLD=0.85
+    
     env_file:
-      - ../.env
+      - ../.env.dev
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.frontend
+    
     ports:
       - "8501:8501"
     volumes:

@@ -138,7 +138,7 @@ make setup-production-https
 
 3. **更新配置**
    ```bash
-   # 编辑 .env.production
+   # 编辑 .env.production.template
    ALLOWED_ORIGINS=https://yourdomain.com
    DEBUG=False
    ```
