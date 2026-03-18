@@ -17,6 +17,12 @@ class ChatInterface:
             st.session_state.messages = []
         if "is_processing" not in st.session_state:
             st.session_state.is_processing = False
+        # 检索范围：None 表示全库
+        if "selected_doc_id" not in st.session_state:
+            st.session_state.selected_doc_id = None
+        # 清空对话时是否重置检索范围（可配置）
+        if "reset_scope_on_clear" not in st.session_state:
+            st.session_state.reset_scope_on_clear = True
     
     def render(self):
         """渲染聊天界面"""
@@ -33,6 +39,9 @@ class ChatInterface:
         # 清空对话按钮
         if st.session_state.messages and st.button("🗑️ 清空对话"):
             st.session_state.messages = []
+            # 根据设置可选地重置检索范围
+            if st.session_state.get("reset_scope_on_clear", True):
+                st.session_state.selected_doc_id = None
             st.rerun()
     
     def _render_chat_history(self):
@@ -52,15 +61,53 @@ class ChatInterface:
                         self._render_sources(message["sources"])
     
     def _render_sources(self, sources):
-        """渲染来源文档"""
+        """渲染来源文档 - 优化为卡片式设计"""
         if sources:
-            with st.expander("📖 相关文档", expanded=False):
+            with st.expander("📚 参考来源", expanded=True):
                 for i, source in enumerate(sources, 1):
-                    st.write(f"**来源 {i}: {source['document_name']}**")
-                    st.write(f"相关内容: {source['content']}")
-                    if source.get('page_number'):
-                        st.write(f"页码: {source['page_number']}")
-                    st.markdown("---")
+                    # 使用容器创建卡片效果
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+                            border-left: 4px solid #667eea;
+                            padding: 12px 16px;
+                            border-radius: 8px;
+                            margin-bottom: 12px;
+                        ">
+                            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                                <span style="
+                                    background: #667eea;
+                                    color: white;
+                                    width: 24px;
+                                    height: 24px;
+                                    border-radius: 50%;
+                                    display: inline-flex;
+                                    align-items: center;
+                                    justify-content: center;
+                                    font-weight: bold;
+                                    font-size: 12px;
+                                    margin-right: 10px;
+                                ">{i}</span>
+                                <strong style="color: #667eea;">{source['document_name']}</strong>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        # 内容预览
+                        content_preview = source['content'][:200] + "..." if len(source['content']) > 200 else source['content']
+                        st.markdown(f"<div style='padding-left: 34px; color: #666; font-size: 0.9em;'>{content_preview}</div>", unsafe_allow_html=True)
+
+                        # 元数据
+                        if source.get('page_number'):
+                            st.caption(f"📄 页码: {source['page_number']}")
+
+                        # 查看完整内容
+                        if len(source['content']) > 200:
+                            with st.expander("查看完整内容", expanded=False):
+                                st.text(source['content'])
+
+                        st.markdown("<br>", unsafe_allow_html=True)
     
     def _render_suggestions(self):
         """渲染问题建议"""
@@ -87,6 +134,31 @@ class ChatInterface:
     def _render_input_area(self):
         """渲染输入区域"""
         
+        # 检索范围选择（限定到指定文档可避免跨文档混入）
+        with st.expander("🔎 检索范围", expanded=False):
+            try:
+                resp = requests.get(f"{self.backend_url}/api/documents/")
+                options = ["全库（默认）"]
+                docs = []
+                if resp.status_code == 200:
+                    docs = resp.json() or []
+                    options += [f"{d['filename']} ({d['id'][:8]})" for d in docs]
+                idx = 0
+                if st.session_state.selected_doc_id:
+                    for i, d in enumerate(docs, start=1):
+                        if d.get('id') == st.session_state.selected_doc_id:
+                            idx = i
+                            break
+                choice = st.selectbox("限定检索范围到指定文档", options=options, index=idx, help="选择文档后，检索与生成仅基于该文档；选择全库则跨文档检索")
+                if choice == "全库（默认）":
+                    st.session_state.selected_doc_id = None
+                else:
+                    sel_index = options.index(choice) - 1
+                    if 0 <= sel_index < len(docs):
+                        st.session_state.selected_doc_id = docs[sel_index].get('id')
+            except Exception:
+                pass
+
         # 问题输入
         user_question = st.chat_input(
             "请输入您的问题...",
@@ -106,6 +178,13 @@ class ChatInterface:
                 help="控制回答时参考的文档数量"
             )
             st.session_state.max_sources = max_sources
+            # 可配置：清空对话时重置检索范围
+            reset_scope = st.checkbox(
+                "清空对话时重置检索范围",
+                value=getattr(st.session_state, "reset_scope_on_clear", True),
+                help="开启后，点击“清空对话”将同时恢复为“全库（默认）”。"
+            )
+            st.session_state.reset_scope_on_clear = reset_scope
     
     def _process_question(self, question: str):
         """处理用户问题"""
@@ -132,10 +211,17 @@ class ChatInterface:
                     
                     response = requests.post(
                         f"{self.backend_url}/api/qa/ask",
-                        json={
-                            "question": question,
-                            "max_sources": max_sources
-                        },
+                        json=(
+                            (lambda payload: (
+                                payload.update({"document_id": st.session_state.selected_doc_id})
+                                if st.session_state.get("selected_doc_id") else None,
+                                payload
+                            ))({
+                                "question": question,
+                                "max_sources": max_sources
+                            })[1]
+                        ),
+                        headers=self._build_byok_headers(),
                         timeout=30
                     )
                     
@@ -249,6 +335,28 @@ class ChatInterface:
             )
         except Exception as e:
             st.error(f"反馈提交失败: {str(e)}")
+    
+    def _build_byok_headers(self) -> dict:
+        """根据侧边栏保存的 BYOK 设置构建请求头（仅保存在本地会话）"""
+        headers = {}
+        try:
+            api_key = getattr(st.session_state, 'byok_api_key', '').strip()
+            # 添加调试输出
+            print(f"DEBUG - Chat interface API key: '{api_key}'")
+            provider = getattr(st.session_state, 'byok_provider', '').strip()
+            base_url = getattr(st.session_state, 'byok_base_url', '').strip()
+            model = getattr(st.session_state, 'byok_model', '').strip()
+            if api_key:
+                headers['LLM-Api-Key'] = api_key
+            if provider:
+                headers['LLM-Provider'] = provider
+            if base_url:
+                headers['LLM-Base-URL'] = base_url
+            if model:
+                headers['LLM-Model'] = model
+        except Exception:
+            pass
+        return headers
     
     def get_chat_history(self):
         """获取聊天历史"""

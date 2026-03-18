@@ -1,25 +1,59 @@
+# syntax=docker/dockerfile:1.6
+
 # 后端Dockerfile
-FROM python:3.11-slim
+FROM python:3.11
+#FROM registry.docker-cn.com/library/python:3.11-slim
+#FROM docker.mirrors.ustc.edu.cn/library/python:3.11-slim
+
+# Accelerate pip with mirror (override at build time via --build-arg)
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG PIP_EXTRA_INDEX_URL=
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+ENV PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
+ENV PIP_DEFAULT_TIMEOUT=120
+
+
+# Switch Debian apt sources to a faster mirror regardless of codename (bookworm/trixie)
+RUN set -eux; \
+  . /etc/os-release; \
+  echo "Detected Debian: ${VERSION_CODENAME}"; \
+  # Prefer Aliyun mirrors; you can override by editing below sed URLs
+  if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+  sed -i -E "s|https?://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g; s|https?://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g" /etc/apt/sources.list.d/debian.sources; \
+  fi; \
+  if [ -f /etc/apt/sources.list ]; then \
+  sed -i -E "s|https?://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g; s|https?://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g" /etc/apt/sources.list || true; \
+  fi; \
+  printf 'Acquire::Retries "5";\n' > /etc/apt/apt.conf.d/80-retries
+
 
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# 安装系统依赖（启用 BuildKit 缓存挂载并禁用推荐包）
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt \
+  apt-get update \
+  && apt-get install -y --no-install-recommends \
+  build-essential \
+  curl \
+  tesseract-ocr \
+  tesseract-ocr-chi-sim \
+  tesseract-ocr-eng \
+  tesseract-ocr-chi-tra \
+  && rm -rf /var/lib/apt/lists/*
 
 # 复制requirements文件
 COPY requirements.txt .
 
-# 安装Python依赖
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# 安装Python依赖（启用 BuildKit 缓存挂载以加速重复构建）
+RUN --mount=type=cache,target=/root/.cache/pip \
+  pip install --upgrade pip -i $PIP_INDEX_URL && \
+  pip install -r requirements.txt -i $PIP_INDEX_URL --retries 5 --timeout 120
 
 # 复制应用代码
 COPY app/ ./app/
-COPY .env* ./
+
 
 # 创建数据目录
 RUN mkdir -p /app/data/uploads /app/data/chroma_db
@@ -29,7 +63,7 @@ EXPOSE 8000
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:8000/health || exit 1
 
-# 启动命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令（增加超时配置）
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "300", "--timeout-graceful-shutdown", "120"]

@@ -16,7 +16,18 @@
       "Bash(timeout 60 ./venv/Scripts/python.exe -m pytest:*)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_cached_embeddings.py -v)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_config.py::TestSettings::test_default_initialization -v)",
-      "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py -v)"
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_document_processor.py -v)",
+      "Bash(curl:*)",
+      "Bash(docker logs:*)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(cp:*)",
+      "Bash(venvScripts:*)",
+      "Bash(python:*)",
+      "Bash(./venv/Scripts/pip list)",
+      "Bash(BACKEND_URL=http://localhost:8000 ../venv/Scripts/python.exe -m streamlit run streamlit_app.py --server.port 8501)",
+      "Bash(timeout 10 curl -s http://localhost:8000/health)",
+      "Bash(timeout:*)",
+      "Bash(../venv/Scripts/python.exe:*)"
     ],
     "deny": [],
     "ask": []

@@ -1,26 +1,253 @@
 """
-文件上传组件
+文件上传组件 - 支持实时更新
 """
 import streamlit as st
 import requests
 from typing import List
+from utils.state_manager import StateManager, AutoRefreshMixin
 
 
-class FileUploadComponent:
-    """文件上传组件类"""
-    
-    def __init__(self, backend_url: str):
-        self.backend_url = backend_url
+class FileUploadComponent(AutoRefreshMixin):
+    """文件上传组件类 - 支持实时更新"""
+
+    def __init__(self, backend_url: str, client_url: str = None):
+        super().__init__("file_upload", cache_duration=10)  # 10秒缓存
+        self.backend_url = backend_url  # 服务器端调用用
+        self.client_url = client_url or backend_url  # 浏览器端调用用
         self.supported_formats = [".pdf", ".docx", ".doc", ".txt", ".md"]
-        
+
+        # 初始化状态管理
+        StateManager.init_state()
+
         # 初始化上传状态
         if "uploading" not in st.session_state:
             st.session_state.uploading = False
+
+        # 初始化当前处理的文档ID列表
+        #if "processing_documents" not in st.session_state:
+        if "upload_processing_docs" not in st.session_state:
+            st.session_state.upload_processing_docs = {}
+
+        # 单文件，批量上传控件的key， 用于上传成功后重建组件以清空选择
+        if "single_file_upload_key" not in st.session_state:
+            st.session_state.single_file_upload_key = 0
+        if "multiple_files_upload_key" not in st.session_state:
+            st.session_state.multiple_files_upload_key = 0
     
+    def _get_max_file_size_mb(self) -> int:
+        """从后端获取允许的最大文件大小，失败回退到50MB"""
+        try:
+            resp = requests.get(f"{self.backend_url}/api/documents/stats/overview", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return int(data.get("storage_info", {}).get("max_file_size_mb", 50))
+        except Exception:
+            pass
+        return 50
+
+    def _calc_upload_timeout(self, size_bytes: int) -> int:
+        """根据文件大小动态计算读超时（秒）。更保守：最少180秒，最多1800秒。"""
+        try:
+            size_mb = max(1, int(size_bytes / (1024 * 1024)))
+            # 经验规则：30 秒基数 + 每 MB 5 秒（考虑慢速网络/磁盘写入）
+            timeout = 30 + size_mb * 5
+            return max(180, min(1800, timeout))
+        except Exception:
+            return 300
+    
+    def _cancel_processing(self, document_id: str, filename: str):
+        """取消文档处理（服务端请求 + 浏览器兜底请求）"""
+        # === 临时调试开始 ===
+        #st.warning(f"[DEBUG] 点击取消: {document_id} - {filename}")
+        # === 临时调试结束 ===
+        # 先查询任务当前是否仍可取消
+        try:
+            status_resp = requests.get(
+                f"{self.backend_url}/api/documents/cancel-status/{document_id}",
+                timeout=5,
+            )
+            if status_resp.status_code == 200:
+                status_data = status_resp.json()
+                cancellable = status_data.get("cancellable", False)
+                current_status = status_data.get("status", "unknown")
+
+                if not cancellable:
+                    # 本地清理，避免列表中继续显示
+                    try:
+                        StateManager.remove_processing_document(document_id)
+                    except Exception:
+                        pass
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
+
+                    if current_status in ("completed", "cancelled"):
+                        st.info(f"ℹ️ {filename} 已处理完成或已取消，无需再次取消。")
+                    else:
+                        st.info(f"ℹ️ 当前任务状态为 {current_status}，暂不可取消。")
+                    return
+        except Exception:
+            # 查询失败时，不阻止后续的取消请求，按原逻辑继续
+            pass
+
+        server_ok = False
+        try:
+            response = requests.post(
+                f"{self.backend_url}/api/documents/cancel/{document_id}",
+                timeout=5
+            )
+            if response.status_code == 200 and (response.json() or {}).get('success'):
+                server_ok = True
+        except Exception:
+            server_ok = False
+
+        if not server_ok:
+            # 兜底：让浏览器直接调用后端（解决容器内 DNS/HTTP 问题）
+            try:
+                st.components.v1.html(
+                    f"""
+                    <script>
+                    (async function() {{
+                      try {{
+                        const resp = await fetch('{self.client_url}/api/documents/cancel/{document_id}', {{
+                          method: 'POST',
+                          credentials: 'include'
+                        }});
+                        console.log('Browser cancel resp status:', resp.status);
+                      }} catch (e) {{ console.error('Browser cancel failed', e); }}
+                    }})();
+                    </script>
+                    """,
+                    height=0,
+                    width=0
+                )
+            except Exception:
+                pass
+
+        # 无论服务端是否成功，先本地清理，避免继续轮询造成闪烁
+        try:
+            StateManager.remove_processing_document(document_id)
+        except Exception:
+            pass
+        if document_id in st.session_state.upload_processing_docs:
+            del st.session_state.upload_processing_docs[document_id]
+
+        if server_ok:
+            st.success(f"✅ 已取消 {filename} 的处理")
+        else:
+            st.info(f"📝 已尝试发送取消请求：{filename} （如任务已完成，将自动从列表中消失）")
+
+    def _check_processing_status(self, document_id: str, filename: str):
+        """检查文档处理状态"""
+        try:
+            response = requests.get(
+                f"{self.backend_url}/api/documents/status/{document_id}",
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                status = result.get('status', 'unknown')
+
+                if status == 'completed':
+                    st.success(f"✅ {filename} 处理完成!")
+                    chunk_count = result.get('chunk_count', 0)
+                    if chunk_count > 0:
+                        st.info(f"📄 文档已分割成 {chunk_count} 个块，可用于问答")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
+                elif status == 'cancelled':
+                    st.warning(f"⚠️ {filename} 已被取消")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
+                elif status == 'failed':
+                    err = result.get('error') or result.get('message') or '未知错误'
+                    st.error(f"❌ {filename} 处理失败: {err}")
+                    # 可选：显示简单建议
+                    st.info("💡 建议：确认文档未加密、扫描质量清晰；如为扫描版PDF请稍后重试或压缩体积后再传。")
+                    # 从处理列表中移除
+                    if document_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[document_id]
+                elif status == 'processing':
+                    progress = result.get('progress')
+                    message = result.get('message')
+                    if isinstance(progress, int):
+                        st.info(f"🔄 {filename} 正在处理中（进度 {progress}%）")
+                    else:
+                        st.info(f"🔄 {filename} 正在处理中...")
+                    if message:
+                        st.write(f"📝 {message}")
+                    st.info("💡 扫描版PDF处理需要时间，请耐心等待")
+                else:
+                    st.warning(f"⚠️ {filename} 状态未知: {status}")
+            else:
+                st.error(f"❌ 无法查询状态: {response.text}")
+
+        except Exception as e:
+            st.error(f"❌ 查询状态时出错: {str(e)}")
+    
+
+    def _cleanup_finished_docs(self):
+        """清理已经完成/失败/取消的任务，避免一直留在列表里"""
+        upload_docs = st.session_state.get("upload_processing_docs", {})
+        if not upload_docs:
+            return
+
+        to_remove = []
+
+        for doc_id, doc_info in list(upload_docs.items()):
+            try:
+                resp = requests.get(
+                    f"{self.backend_url}/api/documents/status/{doc_id}",
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    status = (data.get("status") or "").lower()
+                    # 后端可能返回: completed / failed / cancelled / not found 等
+                    if status in ("completed", "failed", "cancelled", "not found", "timeout", "error"):
+                        to_remove.append(doc_id)
+                elif resp.status_code == 404:
+                    to_remove.append(doc_id)
+            except Exception:
+                # 查询失败时不做强制删除，等下次再清理
+                continue
+
+        for doc_id in to_remove:
+            if doc_id in st.session_state.upload_processing_docs:
+                del st.session_state.upload_processing_docs[doc_id]
+            try:
+                StateManager.remove_processing_document(doc_id)
+            except Exception:
+                pass
+
     def render(self):
         """渲染文件上传界面"""
-        
+
         st.subheader("📤 上传文档")
+        # 渲染前先清理掉已完成的任务
+        self._cleanup_finished_docs()
+
+        # 显示正在处理的文档
+        upload_docs = st.session_state.get("upload_processing_docs", {})
+        if upload_docs:
+            with st.expander(f"🔄 正在处理的文档 ({len(upload_docs)})", expanded=True):
+                for doc_id, doc_info in list(upload_docs.items()):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+
+                    with col1:
+                        st.write(f"📄 {doc_info['filename']}")
+
+                    with col2:
+                        if st.button("📊 状态", key=f"check_{doc_id}"):
+                            self._check_processing_status(doc_id, doc_info['filename'])
+
+                    with col3:
+                        if st.button("🛑 取消", key=f"cancel_list_{doc_id}"):
+                            self._cancel_processing(doc_id, doc_info['filename'])
+
+                st.markdown("---")
         
         # 显示支持的格式
         with st.expander("支持的文件格式", expanded=False):
@@ -32,7 +259,8 @@ class FileUploadComponent:
         uploaded_file = st.file_uploader(
             "选择文件",
             type=["pdf", "docx", "doc", "txt", "md"],
-            help="支持PDF、Word、文本和Markdown文件"
+            help="支持PDF、Word、文本和Markdown文件",
+            key=f"single_file_upload_key_{st.session_state.single_file_upload_key}"
         )
         
         if uploaded_file is not None:
@@ -53,7 +281,8 @@ class FileUploadComponent:
             "选择多个文件",
             type=["pdf", "docx", "doc", "txt", "md"],
             accept_multiple_files=True,
-            help="可以同时选择多个文件进行批量上传"
+            help="可以同时选择多个文件进行批量上传",
+            key=f"multiple_files_upload_key_{st.session_state.multiple_files_upload_key}"
         )
         
         if uploaded_files:
@@ -69,41 +298,110 @@ class FileUploadComponent:
         """上传单个文件"""
         try:
             # 设置上传状态
+            reset_uploader = False
             st.session_state.uploading = True
             
+            # 读取后端限制，超限则提前失败，避免长时间等待
+            max_file_size_mb = self._get_max_file_size_mb()
+            if uploaded_file.size > max_file_size_mb * 1024 * 1024:
+                st.error(f"❌ 文件超过后端限制：{max_file_size_mb} MB。请压缩后重试，或联系管理员提高限制。")
+                return
+
+            # 动态计算超时：大文件/扫描PDF需要更长时间传输
+            read_timeout = self._calc_upload_timeout(uploaded_file.size)
+
             with st.spinner(f"正在上传 {uploaded_file.name}..."):
                 files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                 
+                # 使用异步上传端点，立即返回
                 response = requests.post(
-                    f"{self.backend_url}/api/documents/upload",
+                    f"{self.backend_url}/api/documents/upload-async",
                     files=files,
-                    timeout=30
+                    timeout=(10, read_timeout)  # (连接超时, 读取超时)
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
                     st.success(f"✅ {uploaded_file.name} 上传成功!")
-                    st.info("文档正在后台处理中，请稍候...")
+
+                    if result.get('processing_mode') == 'async':
+                        # 异步处理模式
+                        document_id = result.get('document_id')
+                        st.info(f"🔄 文档正在后台异步处理中... 文档ID: `{document_id}`")
+
+                        # 添加到处理队列和session state
+                        StateManager.add_processing_document(document_id)
+                        st.session_state.upload_processing_docs[document_id] = {
+                            "filename": uploaded_file.name,
+                            "upload_time": uploaded_file.size
+                        }
+
+                        # 根据文件大小给出更准确的预估时间
+                        file_size_mb = uploaded_file.size / (1024 * 1024)
+                        if file_size_mb > 10:
+                            st.warning("📋 大型文档处理提示：")
+                            st.write("• 🔍 扫描版PDF需要OCR文字识别，可能需要3-10分钟")
+                            st.write("• 📊 处理进度将实时显示在下方监听区域")
+                            st.write("• ✅ 处理完成后会自动更新文档列表和统计信息")
+                            st.write("• ⏰ 如果监听超时，请使用右侧刷新按钮查看结果")
+                            st.write("• 🛑 如需取消处理，请点击下方取消按钮")
+                        else:
+                            st.info("💡 小型文档通常在1-2分钟内完成处理，完成后会自动更新列表")
+
+                        # 创建两列：状态查询和取消按钮
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            if st.button(f"📊 查看处理状态", key=f"status_{document_id}"):
+                                self._check_processing_status(document_id, uploaded_file.name)
+
+                        with col2:
+                            if st.button(f"🛑 取消处理", key=f"cancel_{document_id}", type="secondary"):
+                                self._cancel_processing(document_id, uploaded_file.name)
+
+                        # 友好提示
+                        st.info("💡 **等待期间您可以：**")
+                        st.write("• 继续上传其他文档")
+                        st.write("• 查看右侧已有文档列表")
+                        st.write("• 测试已有文档的问答功能")
+                        st.write("• 如果文档过大或处理时间过长，可以点击取消按钮停止处理")
+                    else:
+                        st.info("文档正在后台处理中，请稍候...")
                     
-                    # 显示文档信息
-                    doc_info = result.get("document", {})
-                    if doc_info:
-                        st.json(doc_info)
+                    # 显示基本信息
+                    if result.get('document_id'):
+                        st.code(f"文档ID: {result['document_id']}")
+                        document_id = result.get('document_id')
+                        if document_id:
+                            # 获取用户选择的刷新模式
+                            refresh_mode = st.session_state.get('realtime_refresh_mode', '实时更新（推荐）')
+
+                            # 使用真正的实时更新
+                            from utils.realtime_update import create_realtime_document_monitor
+                            monitor_html = create_realtime_document_monitor(document_id, self.client_url, refresh_mode)
+                            st.components.v1.html(monitor_html, height=90)
+                    if result.get('filename'):
+                        st.code(f"文件名: {result['filename']}")
+                    # 上传/排队成功后，重置单文件上传控件
+                    reset_uploader = True
                 elif response.status_code == 409:
-                    # 处理重复文件错误
                     error_detail = response.json().get("detail", "文件已存在")
                     st.warning(f"⚠️ {error_detail}")
+                    reset_uploader = True
                 else:
                     error_detail = response.json().get("detail", "未知错误")
                     st.error(f"❌ 上传失败: {error_detail}")
-                    
+
         except requests.exceptions.Timeout:
-            st.error("❌ 上传超时，请检查网络连接或稍后重试")
+            st.error("❌ 上传超时：文件较大或网络较慢。建议压缩文件、改为批量上传（超时更长），或稍后重试。")
         except Exception as e:
             st.error(f"❌ 上传出错: {str(e)}")
         finally:
             # 重置上传状态
             st.session_state.uploading = False
+            # 根据需要重置上传控件
+            if reset_uploader:
+                st.session_state.single_file_upload_key += 1
     
     def _upload_multiple_files(self, uploaded_files: List):
         """批量上传文件"""
@@ -123,7 +421,7 @@ class FileUploadComponent:
                 response = requests.post(
                     f"{self.backend_url}/api/documents/batch-upload",
                     files=files,
-                    timeout=60
+                    timeout=900  # 批量上传增加到15分钟
                 )
                 
                 if response.status_code == 200:

@@ -5,15 +5,18 @@ import os
 import json
 import base64
 from typing import Optional, Dict, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import logging
+from fastapi import HTTPException
+from app.core.url_safety import is_safe_base_url
+
 
 logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
     """应用配置类"""
-    
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     # 应用基本配置
     app_name: str = "RAG Knowledge Base"
     app_version: str = "1.0.0"
@@ -22,6 +25,10 @@ class Settings(BaseSettings):
     # LLM配置 - 支持多种模型提供商
     llm_provider: str = "openai"  # 支持: openai, deepseek, zhipu, etc.
     embedding_provider: str = "openai"  # 嵌入模型提供商，可以与LLM提供商不同
+
+    # Base URL配置
+    allowed_chat_base_urls: str = ("https://api.openai.com/v1,https://api.deepseek.com,"
+  "https://open.bigmodel.cn/api/paas/v4,https://openrouter.ai/api/v1")
     
     # API配置 - 支持多种获取方式
     api_key: Optional[str] = None
@@ -30,21 +37,31 @@ class Settings(BaseSettings):
     
     # 智谱AI配置
     zhipu_api_key: Optional[str] = None
-    
+
     # 向后兼容的OpenAI配置
     openai_api_key: Optional[str] = None
     openai_api_key_file: Optional[str] = None
     openai_api_key_base64: Optional[str] = None
-    
+
+    # 嵌入模型专用API Key（与LLM解耦）
+    embedding_api_key: Optional[str] = None
+    embedding_api_key_file: Optional[str] = None
+    embedding_api_key_base64: Optional[str] = None
+
     # 模型配置
-    api_base_url: Optional[str] = None  # 自定义API端点
+    api_base_url: Optional[str] = None  # 自定义API端点（聊天模型）
     embedding_api_base_url: Optional[str] = None  # 嵌入模型API端点
     chat_model: str = "gpt-3.5-turbo"  # 聊天模型
     embedding_model: str = "text-embedding-ada-002"  # 嵌入模型
-    
+
     # 存储配置
     upload_dir: str = "./data/uploads"
     chroma_db_path: str = "./data/chroma_db"
+    # 临时上传目录（容器本地，写入更快，用于先写临时再后台搬迁）
+    temp_upload_dir: str = "/tmp/rag_uploads"
+    # 作业状态目录（用于持久化处理进度/错误）
+    job_status_dir: str = "./data/job_status"
+    max_file_size_mb: int = 50  # 最大文件上传大小（MB）
     
     # 服务器配置
     backend_host: str = "0.0.0.0"
@@ -52,11 +69,19 @@ class Settings(BaseSettings):
     frontend_host: str = "0.0.0.0"
     frontend_port: int = 8501
     
+    # CORS配置
+    allowed_origins: str = "http://localhost:8501,http://127.0.0.1:8501"  # 允许的前端域名，逗号分隔
+    allowed_methods: str = "GET,POST,DELETE"  # 允许的HTTP方法
+    allowed_headers: str = "Content-Type,Authorization,LLM-API-Key,LLM-Provider,LLM-Base-URL,LLM-Model,Cache-Control,Connection"  # 允许的请求头（含BYOK和SSE）
+    
     # RAG配置
     chunk_size: int = 1000
     chunk_overlap: int = 200
     max_sources: int = 3
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 1.5  # ChromaDB距离分数,值越小越相似,1.5以下通常为相关
+    # 回退/过滤相关
+    relevance_fallback_threshold: float = 0.5  # 更严格的相似度阈值（距离<=该值视为强相关），无强相关则回退到全库
+    relevance_fallback_margin: float = 0.1     # 当全库最佳结果优于限定范围最佳结果超过该边际时触发回退
     
     # 成本优化配置
     enable_embedding_cache: bool = True
@@ -72,16 +97,75 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1     # 降低随机性提高缓存命中
     llm_max_tokens: int = 800        # 减少生成token数
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    # 配额限制配置
+    enable_quota_limit: bool = True  # 是否启用配额限制
+    default_daily_quota: int = 5     # 默认每日配额（未提供自定义API Key的用户）
+    quota_storage_path: str = "./data/quotas"  # 配额数据存储路径
 
+    # jwt认证相关
+    jwt_algorithm: str = "HS256"
+    jwt_secret: str | None = None
+    jwt_secret_file: str | None = None
+    jwt_secret_base64: str | None = None
+
+    # 管理员密钥配置
+    admin_username: str = "admin"
+    admin_password_hash: str | None = None  
+    admin_password_hash_file: str | None = None
+               
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # 确保目录存在
         os.makedirs(self.upload_dir, exist_ok=True)
         os.makedirs(self.chroma_db_path, exist_ok=True)
+        # 确保临时目录存在
+        try:
+            os.makedirs(self.temp_upload_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create temp upload dir {self.temp_upload_dir}: {e}")
+        # 确保作业状态目录存在
+        try:
+            os.makedirs(self.job_status_dir, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create job status dir {self.job_status_dir}: {e}")
     
+
+    def get_jwt_secret(self) -> str:
+        if self.jwt_secret_file and os.path.exists(self.jwt_secret_file):
+            return open(self.jwt_secret_file, 'r', encoding="utf-8").read().strip()
+        
+        p = "/run/secrets/jwt_secret"
+        if os.path.exists(p):
+            return open(p, 'r', encoding="utf-8").read().strip()
+        
+        if self.jwt_secret_base64:
+            return base64.b64decode(self.jwt_secret_base64).decode('utf-8').strip()
+        
+
+    def get_admin_password_hash(self) -> str:
+        if self.admin_password_hash_file and os.path.exists(self.admin_password_hash_file):
+            return open(self.admin_password_hash_file, 'r', encoding="utf-8").read().strip()
+        
+        p = "/run/secrets/admin_password_hash"
+        if os.path.exists(p):
+            return open(p, 'r', encoding="utf-8").read().strip()
+
+   
+    def get_allowed_chat_base_urls(self) -> list[str]:
+        """获取允许的聊天模型API端点列表"""
+        return [url.strip() for url in self.allowed_chat_base_urls.split(",") if url.strip()]
+    
+    
+    def get_model_config(self, overrides=None):
+        overrides = overrides or {}
+        cfg = {}
+        if overrides.get("api_base_url"):
+            url = overrides["api_base_url"]
+            if not is_safe_base_url(url, self.get_allowed_chat_base_urls()):
+                raise HTTPException(status_code=400, detail="LLM-Base-URL 不安全")
+            cfg["api_base_url"] = url
+        return cfg
+
     def get_api_key(self) -> Optional[str]:
         """安全地获取API Key（支持多种提供商）"""
         # 方式1: 新的通用API key配置
@@ -168,14 +252,64 @@ class Settings(BaseSettings):
         return self.get_api_key()
     
     def get_embedding_api_key(self) -> Optional[str]:
-        """获取嵌入模型的API Key"""
-        if self.embedding_provider == "zhipu":
+        """获取嵌入模型的API Key（优先使用专用配置，其次按提供商回退，最后复用通用API Key）"""
+        # 1) 专用嵌入 Key
+        if self.embedding_api_key:
+            return self.embedding_api_key
+        # 2) 从文件读取
+        if self.embedding_api_key_file:
+            try:
+                with open(self.embedding_api_key_file, 'r') as f:
+                    key = f.read().strip()
+                    if key:
+                        logger.info(f"Embedding API key loaded from file: {self.embedding_api_key_file}")
+                        return key
+            except Exception as e:
+                logger.warning(f"Failed to read embedding API key from file {self.embedding_api_key_file}: {e}")
+        # 3) 从base64
+        if self.embedding_api_key_base64:
+            try:
+                key = base64.b64decode(self.embedding_api_key_base64).decode('utf-8').strip()
+                if key:
+                    logger.info("Embedding API key loaded from base64 environment variable")
+                    return key
+            except Exception as e:
+                logger.warning(f"Failed to decode base64 embedding API key: {e}")
+        # 4) 提供商专用（zhipu 兼容旧行为）
+        if self.embedding_provider == "zhipu" and self.zhipu_api_key:
             return self.zhipu_api_key
-        else:
-            return self.get_api_key()
-    
-    def get_model_config(self) -> Dict[str, Any]:
-        """获取当前模型配置"""
+        # 5) 回退到通用 API Key（与 LLM 共享）
+        return self.get_api_key()
+
+    def detect_provider_from_api_key(self, api_key: str) -> str:
+        """根据API Key格式自动检测提供商"""
+        if not api_key:
+            return self.llm_provider
+        
+        api_key = api_key.strip()
+        
+        # Zhipu API keys have the format: xxxxxxxx.xxxxxxxxxxxxxx (32 char hex + . + 16 chars)
+        # Check this first since it has a unique format
+        if "." in api_key and len(api_key.split(".")) == 2:
+            parts = api_key.split(".")
+            if len(parts[0]) == 32 and len(parts[1]) == 16:
+                return "zhipu"
+        
+        # OpenAI API keys start with "sk-" and are longer (51-55 chars typically)
+        if api_key.startswith("sk-") and len(api_key) >= 48:
+            return "openai"
+        
+        # DeepSeek API keys start with "sk-" and are shorter than OpenAI keys
+        if api_key.startswith("sk-") and len(api_key) <= 47:
+            return "deepseek"
+        
+        # Default to current provider if pattern doesn't match
+        return self.llm_provider
+
+    def get_model_config(self, overrides: Optional[dict] = None) -> Dict[str, Any]:
+        """获取当前模型配置，支持按请求覆盖"""
+        overrides = overrides or {}
+        
         config = {
             "provider": self.llm_provider,
             "embedding_provider": self.embedding_provider,
@@ -185,17 +319,47 @@ class Settings(BaseSettings):
             "embedding_api_base_url": self.embedding_api_base_url
         }
         
+        # 应用覆盖项
+        if overrides.get("provider"):
+            config["provider"] = overrides["provider"]
+        if overrides.get("api_base_url"):
+            config["api_base_url"] = overrides["api_base_url"]
+        if overrides.get("model"):
+            config["chat_model"] = overrides["model"]
+            
+        # 如果提供了API key但没有明确指定provider，尝试自动检测
+        auto_detected = False
+        if overrides.get("api_key") and not overrides.get("provider"):
+            detected_provider = self.detect_provider_from_api_key(overrides["api_key"])
+            config["provider"] = detected_provider
+            auto_detected = True
+            if detected_provider != self.llm_provider:
+                logger.info(f"Auto-detected provider '{detected_provider}' based on API key format")
+        
         # 根据不同提供商设置默认值
-        if self.llm_provider == "deepseek":
-            config.setdefault("api_base_url", "https://api.deepseek.com")
-            if self.chat_model == "gpt-3.5-turbo":  # 如果还是默认值
+        # 如果provider被覆盖/自动检测且没有明确指定base_url，则使用provider对应的默认URL
+        provider_changed = (overrides.get("provider") and overrides["provider"] != self.llm_provider) or auto_detected
+        
+        if config["provider"] == "deepseek":
+            # 当provider变更或自动检测为DeepSeek时，如果没有明确指定URL，使用DeepSeek的URL
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://api.deepseek.com"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://api.deepseek.com"
+            if config["chat_model"] == "gpt-3.5-turbo":  # 如果还是默认值
                 config["chat_model"] = "deepseek-chat"
-        elif self.llm_provider == "zhipu":
-            config.setdefault("api_base_url", "https://open.bigmodel.cn/api/paas/v4")
-            if self.chat_model == "gpt-3.5-turbo":
+        elif config["provider"] == "zhipu":
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://open.bigmodel.cn/api/paas/v4"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://open.bigmodel.cn/api/paas/v4"
+            if config["chat_model"] == "gpt-3.5-turbo":
                 config["chat_model"] = "glm-4"
-        elif self.llm_provider == "openai":
-            config.setdefault("api_base_url", "https://api.openai.com/v1")
+        elif config["provider"] == "openai":
+            if not overrides.get("api_base_url") and (provider_changed or auto_detected):
+                config["api_base_url"] = "https://api.openai.com/v1"
+            elif not overrides.get("api_base_url") and not config["api_base_url"]:
+                config["api_base_url"] = "https://api.openai.com/v1"
         
         # 嵌入模型配置
         if self.embedding_provider == "zhipu":
@@ -206,8 +370,33 @@ class Settings(BaseSettings):
         elif self.embedding_provider == "openai":
             if not config["embedding_api_base_url"]:
                 config["embedding_api_base_url"] = "https://api.openai.com/v1"
-        
+        elif self.embedding_provider == "qwen":
+            # Ali Qwen (DashScope) OpenAI-compatible endpoint
+            if not config["embedding_api_base_url"]:
+                config["embedding_api_base_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            # 若仍是默认OpenAI旧值，替换为Qwen的默认嵌入模型
+            if self.embedding_model == "text-embedding-ada-002":
+                config["embedding_model"] = "text-embedding-v3"
+
         return config
+
+    def get_cors_origins(self) -> list:
+        """获取CORS允许的源域名列表"""
+        if self.allowed_origins == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+    
+    def get_cors_methods(self) -> list:
+        """获取CORS允许的HTTP方法列表"""
+        if self.allowed_methods == "*":
+            return ["*"]
+        return [method.strip() for method in self.allowed_methods.split(",") if method.strip()]
+    
+    def get_cors_headers(self) -> list:
+        """获取CORS允许的请求头列表"""
+        if self.allowed_headers == "*":
+            return ["*"]
+        return [header.strip() for header in self.allowed_headers.split(",") if header.strip()]
 
 
 # 全局配置实例

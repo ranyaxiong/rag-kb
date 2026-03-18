@@ -1,0 +1,76 @@
+# Local HTTPS Development Environment
+# Using Nginx with mkcert certificates
+
+services:
+  backend:
+    
+    expose:
+      - "8000"
+    ports:
+      - "5678:5678" # 调试端口
+    volumes:
+      - ../app:/app/app
+    env_file:
+      - ../.env.local-https
+      
+      # Mount secrets if using Docker secrets approach
+      #- ../secrets:/run/secrets:ro
+    #command: [python -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678",  "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    
+      
+      
+    
+    
+    networks:
+      - rag_network
+    
+
+  frontend:
+    
+    expose:
+      - "8501"
+    ports:
+      - "5679:5679"
+    volumes:
+      - ../frontend:/app/frontend
+    env_file:
+      - ../.env.local-https
+    
+    
+    restart: unless-stopped
+    command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5679",  "-m", "streamlit", "run", "frontend/streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.fileWatcherType", "poll"]
+    networks:
+      - rag_network
+    
+
+  nginx:
+    image: nginx:alpine
+    container_name: rag-kb-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - ../.env.local-https
+    volumes:
+      # Nginx configuration
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      # mkcert local certificates
+      - ./nginx/certs:/etc/nginx/certs:ro
+      # Nginx logs (optional, for debugging)
+      - ../logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  rag_network:
+    driver: bridge

@@ -137,6 +137,60 @@ docker-logs: ## 查看Docker日志
 docker-ps: ## 查看Docker服务状态
 	cd docker && docker-compose ps
 
+# HTTPS相关命令
+setup-local-https: ## 设置本地HTTPS开发环境（生成mkcert证书）
+	@echo "$(YELLOW)🔐 设置本地HTTPS开发环境...$(NC)"
+	@if command -v bash > /dev/null 2>&1; then \
+		chmod +x scripts/setup-local-https.sh && bash scripts/setup-local-https.sh; \
+	else \
+		echo "$(YELLOW)⚠️  检测到Windows系统，请运行: scripts\setup-local-https.bat$(NC)"; \
+		echo "$(BLUE)或者手动执行以下步骤:$(NC)"; \
+		echo "  1. 安装 mkcert: choco install mkcert"; \
+		echo "  2. 运行: scripts\setup-local-https.bat"; \
+	fi
+
+dev-https: ## 启动本地HTTPS开发模式
+	@echo "$(YELLOW)🔐 启动本地HTTPS开发模式...$(NC)"
+	@if [ ! -f docker/nginx/certs/local-cert.pem ]; then \
+		echo "$(RED)❌ 证书未找到，请先运行: make setup-local-https$(NC)"; \
+		exit 1; \
+	fi
+	@make env
+	@echo "$(YELLOW)🐳 启动Docker服务...$(NC)"
+	cd docker && docker-compose -f docker-compose.local-https.yml up -d --build
+	@echo "$(GREEN)✅ 本地HTTPS开发环境已启动$(NC)"
+	@echo "$(BLUE)🌐 访问地址:$(NC)"
+	@echo "   https://localhost"
+	@echo "   https://127.0.0.1"
+	@echo "   https://local.rag-kb.dev (需要添加hosts)"
+	@echo "$(BLUE)📊 查看日志: make docker-logs-https$(NC)"
+	@echo "$(BLUE)🛑 停止服务: make stop-https$(NC)"
+
+stop-https: ## 停止本地HTTPS开发服务
+	@echo "$(YELLOW)🛑 停止本地HTTPS服务...$(NC)"
+	cd docker && docker-compose -f docker-compose.local-https.yml down
+	@echo "$(GREEN)✅ 服务已停止$(NC)"
+
+docker-logs-https: ## 查看HTTPS开发环境日志
+	cd docker && docker-compose -f docker-compose.local-https.yml logs -f
+
+test-https: ## 测试HTTPS配置
+	@echo "$(YELLOW)🧪 测试HTTPS配置...$(NC)"
+	@echo ""
+	@echo "测试 HTTPS 访问..."
+	@curl -k -I https://localhost 2>/dev/null && echo "$(GREEN)✅ HTTPS 访问正常$(NC)" || echo "$(RED)❌ HTTPS 访问失败$(NC)"
+	@echo ""
+	@echo "测试健康检查端点..."
+	@curl -k -s https://localhost/health | grep -q "healthy" && echo "$(GREEN)✅ 健康检查正常$(NC)" || echo "$(RED)❌ 健康检查失败$(NC)"
+	@echo ""
+	@echo "测试 HTTP 重定向..."
+	@curl -I http://localhost 2>/dev/null | grep -q "301\|302" && echo "$(GREEN)✅ HTTP自动重定向到HTTPS$(NC)" || echo "$(YELLOW)⚠️  未配置HTTP重定向$(NC)"
+
+setup-production-https: ## 运行生产环境HTTPS配置向导
+	@echo "$(YELLOW)🚀 生产环境HTTPS配置向导...$(NC)"
+	@chmod +x scripts/setup-production-https.sh
+	@bash scripts/setup-production-https.sh
+
 # 部署相关
 build: ## 构建应用
 	@echo "$(YELLOW)🔨 构建应用...$(NC)"

@@ -40,6 +40,7 @@ class QuestionRequest(BaseModel):
     """问答请求模型"""
     question: str
     max_sources: Optional[int] = 3
+    document_id: Optional[str] = None
 
 
 class SourceDocument(BaseModel):

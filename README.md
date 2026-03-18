@@ -1,325 +1,529 @@
-# RAG知识库系统
+# RAG Knowledge Base
 
-一个基于RAG（Retrieval-Augmented Generation）技术的轻量级知识库应用，支持文档上传、智能问答和语义搜索。
+一个面向中文与多模型场景的 RAG（Retrieval-Augmented Generation）知识库系统：
 
-## 🚀 特性
+- 后端使用 **FastAPI** 提供文档、问答、配额、成本监控等 API
+- 前端使用 **Streamlit** 提供开箱即用的上传、检索、问答与管理界面
+- 底层使用 **ChromaDB + LangChain** 构建向量检索与问答链路
+- 支持 **OpenAI / DeepSeek / Zhipu / Qwen / OpenAI-compatible** 多种接入方式
 
-- **多格式文档支持**: PDF, Word, TXT, Markdown
-- **智能问答**: 基于LangChain和OpenAI的RAG问答系统
-- **语义搜索**: 使用ChromaDB进行向量相似度搜索
-- **友好界面**: Streamlit构建的直观用户界面
-- **容器化部署**: Docker和Docker Compose支持
-- **CI/CD集成**: GitHub Actions自动化流程
+它不仅是一个“能跑起来”的 RAG Demo，也包含了不少更贴近真实产品环境的能力：**异步文档处理、实时状态更新、任务取消、扫描版 PDF OCR、BYOK、自定义配额、缓存节流、管理员控制台、Docker/HTTPS 部署**。
 
-## 🛠️ 技术栈
+## ✨ 核心能力
 
-### 后端
-- **FastAPI**: 高性能Web框架
-- **LangChain**: LLM应用开发框架
-- **ChromaDB**: 轻量级向量数据库
-- **OpenAI**: GPT-3.5和Embedding服务
+### 文档处理
 
-### 前端
-- **Streamlit**: 快速构建数据应用界面
-- **Python**: 统一的开发语言
+- 支持 `PDF`、`DOCX/DOC`、`TXT`、`Markdown`
+- PDF 采用智能处理策略：可搜索 PDF 优先走文本提取，扫描版 PDF 可走 OCR 增强流程
+- 文档自动切分为 chunk，并写入 ChromaDB 向量库
+- 上传后支持同步或异步处理，适合大文件与慢 OCR 场景
 
-### 部署
-- **Docker**: 容器化部署
-- **GitHub Actions**: CI/CD自动化
+### 检索与问答
 
-## 📦 安装部署
+- 基于 LangChain 的 RAG 问答链路
+- 支持语义检索与带来源引用的回答
+- 前端可限制检索范围到单个文档，减少跨文档误召回
+- 提供问题建议、检索结果来源展示、处理耗时展示
 
-### 前置要求
+### 多模型 / 多提供商
+
+- 服务端支持 `openai`、`deepseek`、`zhipu`、`qwen`
+- 前端支持 **BYOK（Bring Your Own Key）**
+- 可自定义模型名与 OpenAI-compatible `base_url`
+- 用户设置会保存在浏览器本地，便于切换不同模型供应商
+
+### 实时性与可操作性
+
+- 异步上传任务可查询状态
+- 提供 **SSE 状态流** 与前端实时更新机制
+- 可取消仍在处理中的文档任务
+- 对超时、失败、取消等状态有单独反馈
+
+### 管理与成本控制
+
+- 管理员登录（JWT）
+- 配额管理：默认按用户指纹限制每日调用次数
+- 用户自带 Key 时可绕过平台默认配额
+- SQLite 缓存嵌入与问答结果，减少重复请求成本
+- 提供缓存统计、成本节省估算、优化建议接口
+
+### 工程化能力
+
+- FastAPI 自动文档：`/docs`
+- 单元测试、覆盖率、lint、format 命令齐全
+- Docker / Docker Compose 开发与部署配置
+- 本地 HTTPS 开发脚本与 Nginx 配置
+- Secret 文件、环境变量、Keyring 等多种安全配置方式
+
+## 🏗️ 系统架构
+
+```text
+Streamlit UI
+    ↓
+FastAPI API
+    ├─ 文档上传 / 异步任务 / 状态查询 / 取消
+    ├─ QA 检索 / 问答 / 配额 / 管理员认证
+    ├─ 成本监控 / 缓存统计
+    ↓
+Core Services
+    ├─ DocumentProcessor / EnhancedPDFProcessor
+    ├─ QAEngine
+    ├─ VectorStore (ChromaDB)
+    ├─ CacheManager / QuotaManager
+    ↓
+LLM / Embedding Providers
+    ├─ OpenAI
+    ├─ DeepSeek
+    ├─ Zhipu GLM
+    ├─ Qwen
+    └─ Custom OpenAI-compatible API
+```
+
+## 🧱 技术栈
+
+### Backend
+
+- FastAPI
+- LangChain / langchain-openai / langchain-chroma
+- ChromaDB
+- PyMuPDF / PyPDF / unstructured
+- Pydantic Settings
+
+### Frontend
+
+- Streamlit
+- requests
+- streamlit-js-eval
+
+### Storage / Infra
+
+- ChromaDB 向量存储
+- SQLite 缓存
+- 本地文件存储（上传文件、配额数据、作业状态）
+- Docker / Docker Compose / Nginx
+
+## 📁 项目结构
+
+```text
+app/
+  api/           # FastAPI 路由：documents / qa / auth / cost
+  core/          # 文档处理、向量库、问答引擎、缓存、配额、配置
+  models/        # Pydantic 模型
+  main.py        # FastAPI 入口
+
+frontend/
+  components/    # 上传、问答、文档管理、模型设置等组件
+  pages/         # Streamlit 多页面（如 Admin）
+  utils/         # 状态管理、实时更新、本地设置加载
+  streamlit_app.py
+
+tests/           # Pytest 测试
+docker/          # Dockerfile、compose、Nginx、本地 HTTPS 配置
+scripts/         # 环境、安全、启动、辅助脚本
+data/            # 上传文件、向量库、配额、任务状态
+secrets/         # 本地 secret 文件（请勿提交）
+```
+
+## 🚀 快速开始
+
+### 1) 环境要求
 
 - Python 3.11+
-- Docker (可选)
-- OpenAI API Key
+- pip
+- Docker（可选）
+- 可用的 LLM API Key（OpenAI / DeepSeek / Zhipu 等）
 
-### 本地开发
+### 2) 克隆仓库
 
-1. **克隆项目**
 ```bash
-git clone <repository-url>
-cd rag-kb-prototype
+git clone <your-repo-url>
+cd <your-repo-dir>
 ```
 
-2. **创建虚拟环境**
+### 3) 创建虚拟环境
+
 ```bash
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate     # Windows
-```
 
-3. **安装依赖**
-```bash
-pip install -r requirements.txt
-```
+# Linux / macOS
+source venv/bin/activate
 
-4. **配置API Key (安全方式)**
-
-**推荐方式 - 系统环境变量:**
-```bash
 # Windows
-set OPENAI_API_KEY=your-api-key-here
-
-# Linux/Mac  
-export OPENAI_API_KEY="your-api-key-here"
+venv\Scripts\activate
 ```
 
-**替代方式 - 系统密钥环:**
-```bash
-pip install keyring
-python scripts/setup-keyring.py
-```
-
-**开发环境 - 配置文件:**
-```bash
-cp .env.secure.example .env
-# 按需配置OPENAI_API_KEY_FILE等选项
-```
-
-> 📖 详细安全配置请参考 [SECURITY.md](SECURITY.md)
-
-5. **启动后端服务**
-```bash
-uvicorn app.main:app --reload
-```
-
-6. **启动前端服务（新终端）**
-```bash
-streamlit run frontend/streamlit_app.py
-```
-
-7. **访问应用**
-- 后端API: http://localhost:8000
-- 前端界面: http://localhost:8501
-- API文档: http://localhost:8000/docs
-
-### Docker部署
-
-1. **配置环境变量**
-```bash
-cp .env.example .env
-# 设置OPENAI_API_KEY
-```
-
-2. **启动服务**
-```bash
-cd docker
-docker-compose up -d --build
-```
-
-3. **查看服务状态**
-```bash
-docker-compose ps
-docker-compose logs -f
-```
-
-4. **访问应用**
-- 前端界面: http://localhost:8501
-- 后端API: http://localhost:8000
-
-### 开发模式部署
+### 4) 安装依赖
 
 ```bash
-cd docker
-docker-compose -f docker-compose.dev.yml up -d --build
+make install
 ```
 
-开发模式支持代码热重载。
-
-## 📖 使用指南
-
-### 1. 上传文档
-
-在左侧边栏的"文档管理"区域：
-- 选择支持的文件格式（PDF、Word、TXT、Markdown）
-- 可以单个上传或批量上传
-- 查看上传状态和处理进度
-
-### 2. 智能问答
-
-在主界面的"智能问答"区域：
-- 输入自然语言问题
-- 查看AI生成的答案
-- 浏览相关的文档来源
-- 对答案进行评分反馈
-
-### 3. 文档管理
-
-在右侧的"文档列表"区域：
-- 查看已上传的文档
-- 查看文档处理状态
-- 删除不需要的文档
-
-## 🧪 测试
-
-### 运行测试
+如果你不使用 `make`，也可以手动执行：
 
 ```bash
-# 运行所有测试
-pytest
-
-# 运行特定测试文件
-pytest tests/test_api.py
-
-# 运行测试并生成覆盖率报告
-pytest --cov=app --cov-report=html
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+mkdir -p data/uploads data/chroma_db logs
 ```
 
-### 测试覆盖率
+### 5) 配置模型与密钥
 
-测试覆盖率报告会生成在 `htmlcov/` 目录中。
+推荐方式：
 
-## 🔧 配置选项
+1. 复制一个示例配置
+2. 填入你的 API Key
+3. 启动服务
 
-### 环境变量
+示例文件：
 
-| 变量名 | 描述 | 默认值 |
-|--------|------|--------|
-| `OPENAI_API_KEY` | OpenAI API密钥 | 必须设置 |
-| `CHUNK_SIZE` | 文档分块大小 | 1000 |
-| `CHUNK_OVERLAP` | 分块重叠大小 | 200 |
-| `MAX_SOURCES` | 最大引用源数量 | 3 |
-| `SIMILARITY_THRESHOLD` | 相似度阈值 | 0.7 |
+- `.env.secure.example`：安全配置模板
+- `.env.deepseek`：DeepSeek 示例
+- `.env.zhipu`：Zhipu 示例
 
-### 支持的文件格式
-
-- PDF (.pdf)
-- Word文档 (.docx, .doc)
-- 文本文件 (.txt)
-- Markdown (.md)
-
-## 🚀 部署到生产环境
-
-### 1. 准备生产配置
+最简单的方式是使用环境变量：
 
 ```bash
-# 创建生产环境配置
-cp .env.example .env.prod
+# Linux / macOS
+export OPENAI_API_KEY="your-key"
 
-# 设置生产环境变量
-# DEBUG=False
-# OPENAI_API_KEY=your_production_key
+# Windows PowerShell
+$env:OPENAI_API_KEY="your-key"
 ```
 
-### 2. 使用Docker部署
+也可以使用：
+
+- `API_KEY`
+- `OPENAI_API_KEY_FILE`
+- Docker secrets
+- 系统 Keyring（`make setup-keyring`）
+
+更多安全说明请查看 [SECURITY.md](SECURITY.md)。
+
+### 6) 启动开发环境
+
+#### 方案 A：一键启动
 
 ```bash
-# 构建生产镜像
-docker build -f docker/Dockerfile.backend -t rag-kb-backend:prod .
-docker build -f docker/Dockerfile.frontend -t rag-kb-frontend:prod .
-
-# 启动生产服务
-docker-compose up -d
+make dev
 ```
 
-### 3. 健康检查
+#### 方案 B：手动分别启动
+
+终端 1：
 
 ```bash
-# 检查后端健康状态
-curl http://localhost:8000/health
-
-# 检查服务状态
-docker-compose ps
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 🔍 监控和日志
+终端 2：
 
-### 应用日志
-
-- 后端日志: 通过FastAPI的日志记录
-- 前端日志: Streamlit自带的日志系统
-- 容器日志: `docker-compose logs -f`
-
-### 健康检查端点
-
-- 后端健康检查: `GET /health`
-- 问答系统健康检查: `GET /api/qa/health`
-- 系统信息: `GET /info`
-
-## 🤝 开发贡献
-
-### 代码规范
-
-项目使用以下代码规范工具：
-- **Black**: 代码格式化
-- **isort**: 导入排序
-- **Flake8**: 代码检查
-
-运行代码检查：
 ```bash
-black app/ tests/
-isort app/ tests/
-flake8 app/ tests/
+BACKEND_URL=http://localhost:8000 streamlit run frontend/streamlit_app.py
 ```
 
-### 提交代码
+### 7) 访问地址
 
-1. Fork项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建Pull Request
+- Frontend: http://localhost:8501
+- Backend API: http://localhost:8000
+- Swagger Docs: http://localhost:8000/docs
+- Health Check: http://localhost:8000/health
 
-## 📋 待办事项
+## 🐳 Docker 与 HTTPS
 
-- [ ] 添加用户认证和权限管理
-- [ ] 支持更多文档格式 (Excel, PowerPoint)
-- [ ] 实现对话历史管理
-- [ ] 添加文档预览功能
-- [ ] 集成更多LLM模型选择
-- [ ] 实现文档版本控制
-- [ ] 添加搜索过滤和排序
-- [ ] 性能优化和缓存机制
+### Docker 开发模式
 
-## ❓ 常见问题
+```bash
+make docker-dev
+```
 
-### Q: 上传文档后无法问答？
-A: 确保文档已经处理完成（状态显示为"completed"），并且设置了正确的OpenAI API Key。
+对应配置文件：`docker/docker-compose.dev.yml`
 
-### Q: Docker启动失败？
-A: 检查端口是否被占用，确保.env文件配置正确，查看docker-compose logs获取详细错误信息。
+### Docker 常规运行
 
-### Q: 问答响应很慢？
-A: 这可能是由于OpenAI API调用延迟，可以尝试调整max_sources参数或检查网络连接。
+```bash
+make docker-run
+```
 
-### Q: 如何增加支持的文件格式？
-A: 在`app/core/document_processor.py`中的`loaders`字典中添加新的文件格式和对应的加载器。
+停止服务：
 
-## 📄 许可证
+```bash
+make docker-stop
+```
 
-本项目采用MIT许可证 - 查看[LICENSE](LICENSE)文件了解详情。
+查看日志：
 
-## 🆘 获取帮助
+```bash
+make docker-logs
+```
 
-如果遇到问题或需要帮助：
+### 本地 HTTPS 开发
 
-1. 查看[常见问题](#-常见问题)
-2. 提交[GitHub Issue](../../issues)
-3. 查看项目文档和代码注释
+仓库内已经提供本地 HTTPS 配置脚本与 Nginx 配置。
 
-## 🎯 路线图
+```bash
+make setup-local-https
+make dev-https
+```
 
-### v1.0 (当前)
-- ✅ 基础RAG问答功能
-- ✅ 多格式文档支持
-- ✅ Streamlit前端界面
-- ✅ Docker容器化部署
+适合需要测试浏览器安全策略、同源/混合内容、HTTPS 场景联调时使用。
 
-### v1.1 (计划中)
-- 🔲 用户认证系统
-- 🔲 对话历史管理
-- 🔲 文档标签和分类
-- 🔲 搜索结果高亮
+## 🤖 支持的模型与接入方式
 
-### v2.0 (未来)
-- 🔲 多租户支持
-- 🔲 API服务化
-- 🔲 移动端支持
-- 🔲 第三方集成
+### 服务端配置
+
+通过环境变量控制：
+
+- `LLM_PROVIDER`
+- `EMBEDDING_PROVIDER`
+- `CHAT_MODEL`
+- `EMBEDDING_MODEL`
+- `API_KEY`
+- `API_BASE_URL`
+- `EMBEDDING_API_BASE_URL`
+
+常见 provider：
+
+- `openai`
+- `deepseek`
+- `zhipu`
+- `qwen`
+
+### 前端 BYOK
+
+前端支持用户临时输入自己的：
+
+- Provider
+- API Key
+- Base URL
+- Model
+
+这些设置会保存在浏览器本地存储中，适合：
+
+- 临时切换模型测试
+- 多环境联调
+- 平台 Key 与用户 Key 并存的场景
+
+## 📄 文档处理说明
+
+### 支持格式
+
+- `.pdf`
+- `.docx`
+- `.doc`
+- `.txt`
+- `.md`
+
+### PDF 处理策略
+
+- 可提取文本的 PDF：优先使用快速文本提取
+- 扫描版 PDF：启用 OCR 增强流程
+- OCR 场景支持取消，避免超长任务阻塞
+
+### OCR 说明
+
+项目已包含 `pytesseract` 与 `Pillow` Python 依赖，但若要完整处理扫描版 PDF，通常还需要在系统层安装 **Tesseract-OCR**。
+
+如果扫描版 PDF 效果不理想，请优先检查：
+
+- 是否已安装 Tesseract 引擎
+- PDF 图像是否清晰
+- 是否存在密码保护或损坏
+
+## 💬 典型使用流程
+
+1. 上传一个或多个文档
+2. 等待后台处理完成
+3. 在聊天区提问
+4. 查看回答、来源片段和处理耗时
+5. 如需要，限定检索范围到某个文档
+6. 对于大文件，可随时查看状态或取消任务
+
+## 🔐 管理员与配额
+
+系统包含一个简单但实用的管理员控制台（Streamlit `Admin` 页面）：
+
+- 管理员登录基于 JWT
+- 可查看配额统计
+- 可重置用户配额
+
+默认配额逻辑：
+
+- 基于 `IP + User-Agent` 生成用户指纹
+- 平台默认每日配额由 `DEFAULT_DAILY_QUOTA` 控制
+- 若用户通过前端提供自己的 API Key，则可绕过默认平台配额
+
+相关配置：
+
+- `ENABLE_QUOTA_LIMIT`
+- `DEFAULT_DAILY_QUOTA`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD_HASH` / `ADMIN_PASSWORD_HASH_FILE`
+- `JWT_SECRET` / `JWT_SECRET_FILE`
+
+可用脚本：
+
+```bash
+python scripts/generate_admin_hash.py
+```
+
+## 💸 缓存与成本优化
+
+项目内置两类缓存：
+
+- Embedding cache
+- QA cache
+
+特点：
+
+- 使用 SQLite 持久化缓存
+- 记录命中次数与最近访问时间
+- 可计算粗略成本节省估算
+- 提供缓存清理与优化建议 API
+
+相关接口示例：
+
+- `GET /api/cost/cache/stats`
+- `GET /api/cost/embedding/stats`
+- `POST /api/cost/cache/cleanup`
+- `GET /api/cost/optimization/recommendations`
+
+## 📚 主要 API 一览
+
+### 基础接口
+
+- `GET /`
+- `GET /health`
+- `GET /info`
+
+### 文档接口
+
+- `POST /api/documents/upload`
+- `POST /api/documents/upload-async`
+- `GET /api/documents/status/{document_id}`
+- `GET /api/documents/status/stream/{document_id}`
+- `POST /api/documents/cancel/{document_id}`
+- `GET /api/documents/stats/overview`
+
+### 问答接口
+
+- `POST /api/qa/ask`
+- `POST /api/qa/search`
+- `GET /api/qa/suggestions`
+- `GET /api/qa/health`
+- `GET /api/qa/stats`
+- `GET /api/qa/quota`
+
+### 管理与认证
+
+- `POST /api/auth/login`
+- `POST /api/qa/quota/reset`
+- `GET /api/qa/quota/stats`
+
+### 成本优化
+
+- `GET /api/cost/cache/stats`
+- `GET /api/cost/optimization/recommendations`
+
+## ⚙️ 关键配置项
+
+| 变量名 | 说明 | 默认值 |
+|---|---|---|
+| `APP_NAME` | 应用名称 | `RAG Knowledge Base` |
+| `DEBUG` | 调试模式 | `True` |
+| `API_KEY` / `OPENAI_API_KEY` | 默认模型 API Key | 无 |
+| `LLM_PROVIDER` | 聊天模型提供商 | `openai` |
+| `EMBEDDING_PROVIDER` | 嵌入模型提供商 | `openai` |
+| `CHAT_MODEL` | 聊天模型名 | `gpt-3.5-turbo` |
+| `EMBEDDING_MODEL` | 嵌入模型名 | `text-embedding-ada-002` |
+| `CHUNK_SIZE` | 文档分块大小 | `1000` |
+| `CHUNK_OVERLAP` | 分块重叠大小 | `200` |
+| `MAX_SOURCES` | 最多引用来源数 | `3` |
+| `SIMILARITY_THRESHOLD` | 相似度阈值 | `0.7` |
+| `MAX_FILE_SIZE_MB` | 上传文件大小限制 | `50` |
+| `ENABLE_QUOTA_LIMIT` | 是否启用配额限制 | `True` |
+| `DEFAULT_DAILY_QUOTA` | 默认每日问答配额 | `5` |
+| `UPLOAD_DIR` | 上传文件目录 | `./data/uploads` |
+| `CHROMA_DB_PATH` | 向量库存储目录 | `./data/chroma_db` |
+| `ALLOWED_ORIGINS` | CORS 白名单 | `*` 或配置值 |
+
+## 🧪 测试与开发命令
+
+### 测试
+
+```bash
+make test
+```
+
+生成 HTML 覆盖率报告：
+
+```bash
+make test-html
+```
+
+### 代码质量
+
+```bash
+make format
+make lint
+```
+
+项目测试基于 `pytest`，覆盖率阈值配置为 **70%**。
+
+## 🛠️ 常见排查
+
+### 上传后无法问答
+
+- 确认文档状态已完成
+- 确认向量库中已有文档
+- 确认默认 API Key 或 BYOK 配置有效
+
+### 扫描版 PDF 提取失败
+
+- 检查是否安装系统级 Tesseract-OCR
+- 检查 PDF 清晰度
+- 尝试缩小文件或重新导出 PDF
+
+### Docker 启动异常
+
+- 检查 `.env` 是否存在且配置正确
+- 检查 `8000` / `8501` 端口占用
+- 查看 `make docker-logs`
+
+### 问答慢或成本高
+
+- 降低 `MAX_SOURCES`
+- 使用缓存统计接口观察命中率
+- 检查模型供应商响应时间
+
+## 🔒 安全建议
+
+- 不要提交 `.env`、密钥文件或 `secrets/` 中的真实内容
+- 优先使用环境变量、Keyring 或 secret 文件
+- 生产环境请显式配置 CORS
+- 管理员密码只保存哈希，不保存明文
+
+## 🤝 开发建议
+
+提交前建议至少运行：
+
+```bash
+make format
+make lint
+make test
+```
+
+如果你准备扩展这个项目，比较适合的方向包括：
+
+- 新增文档格式（如 Excel / PPT）
+- 增强文档过滤、标签与元数据检索
+- 增加对话历史与会话持久化
+- 接入更多 OpenAI-compatible 服务
+- 增加更完整的管理员运维页面
+
+## 📄 License
+
+本项目采用 MIT License。
 
 ---
 
-**享受使用RAG知识库系统！** 🚀
+如果你想把它继续扩展成团队内部知识库、客服问答底座，或一个支持多租户/多模型的 RAG 平台，这个仓库已经具备一个很不错的工程起点。

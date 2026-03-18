@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 class QAEngine:
     """RAG问答引擎"""
     
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, overrides: Optional[dict] = None):
         self.vector_store = vector_store
         self.llm = None
         self.qa_chain = None
+        # 允许按请求覆盖：{"api_key": str, "provider": str, "api_base_url": str, "model": str}
+        self._overrides = overrides or {}
+        self._effective_model_config = None  # 记录生效的模型配置用于缓存等
         
         self._initialize_llm()
         self._build_qa_chain()
@@ -32,12 +35,18 @@ class QAEngine:
     def _initialize_llm(self):
         """初始化大语言模型"""
         try:
-            api_key = settings.get_api_key()
+            overrides = self._overrides or {}
+            # 1) API Key 优先使用请求覆盖，否则使用全局配置
+            api_key = overrides.get("api_key") or settings.get_api_key()
+            if overrides.get("api_base_url") and not overrides.get("api_key"):
+                 raise ValueError("base URL 需同时提供LLM-Api-Key")
             if not api_key:
                 raise ValueError(f"API key not configured for {settings.llm_provider}")
             
-            # 获取模型配置
-            model_config = settings.get_model_config()
+            # 2) 获取模型配置并应用覆盖项（不修改全局 settings）
+            model_config = settings.get_model_config(overrides)
+            # 记录生效配置
+            self._effective_model_config = dict(model_config)
             
             # 使用ChatOpenAI（支持兼容的API）
             llm_kwargs = {
@@ -61,7 +70,7 @@ class QAEngine:
             logger.error(f"Error initializing LLM: {str(e)}")
             raise
     
-    def _build_qa_chain(self):
+    def _build_qa_chain(self, retriever=None):
         """构建问答链"""
         try:
             # 自定义提示模板
@@ -85,24 +94,28 @@ class QAEngine:
                 input_variables=["context", "question"]
             )
             
-            # 构建检索问答链
-            self.qa_chain = RetrievalQA.from_chain_type(
+            # 构建检索问答链（支持传入按请求定制的 retriever）
+            effective_retriever = retriever or self.vector_store.as_retriever(
+                search_kwargs={"k": settings.max_sources}
+            )
+            qa_chain = RetrievalQA.from_chain_type(
                 llm=self.llm,
                 chain_type="stuff",
-                retriever=self.vector_store.as_retriever(
-                    search_kwargs={"k": settings.max_sources}
-                ),
+                retriever=effective_retriever,
                 return_source_documents=True,
                 chain_type_kwargs={"prompt": PROMPT}
             )
-            
+            # 仅当未传入自定义 retriever 时，保留为默认链
+            if retriever is None:
+                self.qa_chain = qa_chain
             logger.info("QA chain built successfully")
+            return qa_chain
             
         except Exception as e:
             logger.error(f"Error building QA chain: {str(e)}")
             raise
     
-    def ask(self, question: str, max_sources: Optional[int] = None) -> QuestionResponse:
+    def ask(self, question: str, max_sources: Optional[int] = None, document_id: Optional[str] = None) -> QuestionResponse:
         """回答问题（带缓存优化）"""
         start_time = time.time()
         
@@ -113,13 +126,99 @@ class QAEngine:
             # 使用指定的源文档数量或默认值
             k = max_sources or settings.max_sources
             
-            # 首先获取相关文档用于生成上下文hash
-            relevant_docs = self.get_relevant_documents(question, k)
+            # 首先获取相关文档用于生成上下文hash；
+            # 若限定文档下只有“低相关”（距离大于阈值）或为零，则回退到全库
+            used_document_id = document_id
+            fallback_note = ""
+
+            if document_id:
+                # 使用打分检索做预判（更严格阈值），并与全库结果比较，必要时回退
+                try:
+                    restricted_scored = self.vector_store.similarity_search_with_score(
+                        query=question,
+                        k=max(k, settings.max_sources * 2),
+                        filter_dict={"document_id": document_id},
+                        threshold=settings.relevance_fallback_threshold,
+                    )
+                except Exception as _e:
+                    logger.warning(f"Scored search failed under document scope, fallback to vanilla search: {_e}")
+                    restricted_scored = []
+                # 全库打分（同阈值），用于与限定范围对比
+                try:
+                    global_scored = self.vector_store.similarity_search_with_score(
+                        query=question,
+                        k=max(k, settings.max_sources * 2),
+                        filter_dict=None,
+                        threshold=settings.relevance_fallback_threshold,
+                    )
+                except Exception as _e:
+                    logger.warning(f"Scored search failed for global scope: {_e}")
+                    global_scored = []
+
+                # 计算最优距离（距离越小越好）
+                best_restricted = min([s for (_, s) in restricted_scored], default=None)
+                best_global = min([s for (_, s) in global_scored], default=None)
+
+                # 记录调试信息：展示前3个候选及其距离
+                if restricted_scored:
+                    top_r = restricted_scored[: min(3, len(restricted_scored))]
+                    logger.info(
+                        "Restricted top candidates: "
+                        + ", ".join(
+                            [
+                                (lambda _d,_s: f"(doc_id={{(((_d.metadata.get('document_id'))[:8]) if isinstance(_d.metadata.get('document_id'), str) else 'unknown')}}, file={{_d.metadata.get('filename', 'Unknown')}}, dist={{_s:.4f}})")(_d=d, _s=s)
+                                for d, s in top_r
+                            ]
+                        )
+                    )
+                if global_scored:
+                    top_g = global_scored[: min(3, len(global_scored))]
+                    logger.info(
+                        "Global top candidates: "
+                        + ", ".join(
+                            [
+                                (lambda _d,_s: f"(doc_id={{(((_d.metadata.get('document_id'))[:8]) if isinstance(_d.metadata.get('document_id'), str) else 'unknown')}}, file={{_d.metadata.get('filename', 'Unknown')}}, dist={{_s:.4f}})")(_d=d, _s=s)
+                                for d, s in top_g
+                            ]
+                        )
+                    )
+
+                should_fallback = False
+                if best_restricted is None and best_global is not None:
+                    should_fallback = True
+                elif best_restricted is not None and best_global is not None:
+                    # 如果全库最优明显优于限定范围（留出安全边际），则回退
+                    margin = getattr(settings, "relevance_fallback_margin", 0.25)
+                    if best_global + margin < best_restricted:
+                        should_fallback = True
+
+                if should_fallback:
+                    logger.info(
+                        f"Fallback to global: best_restricted={best_restricted}, best_global={best_global}, "
+                        f"threshold={settings.relevance_fallback_threshold}"
+                    )
+                    used_document_id = None
+                    # 使用全库阈值过滤后的文档作为上下文（若无则退回无过滤的简单检索）
+                    if len(global_scored) > 0:
+                        relevant_docs = [doc for doc, _ in global_scored][:max(k, settings.max_sources)]
+                        fallback_note = "提示：在您选定的文档中未检索到更相关的内容，已自动在全库中扩大检索范围。"
+                    else:
+                        relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources * 2), None)
+                        fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。"
+                else:
+                    # 使用限定范围内阈值过滤后的文档作为上下文
+                    relevant_docs = [doc for doc, _ in restricted_scored][:k]
+            else:
+                # 全库预检（保持原行为即可）
+                relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources), None)
+            
+            # 基于最终采用的上下文计算hash
             context_hash = cache_manager.get_context_hash(relevant_docs)
             
-            # 获取模型配置用于缓存key
-            model_config = settings.get_model_config()
-            model_name = f"{model_config['provider']}/{model_config['chat_model']}"
+            # 获取模型配置用于缓存key（使用生效的配置，避免与默认配置混淆）
+            model_cfg = self._effective_model_config or settings.get_model_config()
+            base = (model_cfg['api_base_url'] or "https://api.openai.com/v1").rstrip('/')
+            model_name = f"{model_cfg['provider']}/{model_cfg['chat_model']}@{base}"
             
             # 检查QA缓存
             cached_result = cache_manager.get_qa_cache(question, context_hash, model_name)
@@ -134,15 +233,35 @@ class QAEngine:
                     from_cache=True
                 )
             
-            # 缓存未命中，执行RAG查询
-            result = self.qa_chain({
-                "query": question,
-                "retriever": self.vector_store.as_retriever(search_kwargs={"k": k})
-            })
+            # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
+            k_effective = k if used_document_id else max(k, settings.max_sources * 2)
+            search_kwargs = {"k": k_effective}
+            if used_document_id:
+                search_kwargs["filter"] = {"document_id": used_document_id}
+            # 构建 retriever：全库检索使用 MMR 增强多样性，降低单文档“淹没”其他文档的情况
+            if used_document_id:
+                retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
+                logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
+            else:
+                mmr_kwargs = {**search_kwargs, "fetch_k": max(20, k_effective * 4), "lambda_mult": 0.5}
+                retriever = self.vector_store.as_retriever(search_type="mmr", search_kwargs=mmr_kwargs)
+                logger.info(f"QAEngine.ask using MMR, search_kwargs={mmr_kwargs}")
+            
+            qa_chain = self._build_qa_chain(retriever=retriever)
+            result = qa_chain.invoke({"query": question})
             
             # 处理答案
             answer = result.get("result", "抱歉，我无法找到相关信息来回答这个问题。")
+            if fallback_note:
+                answer = f"{fallback_note}\n\n" + answer
             source_docs = result.get("source_documents", [])
+            # 防御性过滤：若指定了 document_id，确保来源文档仅来自该文档
+            if used_document_id:
+                before = len(source_docs)
+                source_docs = [d for d in source_docs if d.metadata.get("document_id") == used_document_id]
+                after = len(source_docs)
+                if after < before:
+                    logger.info(f"Filtered source documents by document_id={used_document_id}: {before} -> {after}")
             
             # 处理源文档
             sources = self._process_source_documents(source_docs)
@@ -210,15 +329,23 @@ class QAEngine:
     def get_relevant_documents(
         self, 
         question: str, 
-        k: int = None
+        k: int = None,
+        document_id: str = None
     ) -> List[Document]:
         """获取相关文档（不生成答案）"""
         try:
             k = k or settings.max_sources
             
+            # 构建过滤条件
+            filter_dict = None
+            if document_id:
+                filter_dict = {"document_id": document_id}
+                logger.info(f"Filtering documents by document_id: {document_id}")
+            
             relevant_docs = self.vector_store.similarity_search(
                 query=question,
-                k=k
+                k=k,
+                filter_dict=filter_dict
             )
             
             logger.info(f"Retrieved {len(relevant_docs)} relevant documents")
@@ -228,34 +355,30 @@ class QAEngine:
             logger.error(f"Error getting relevant documents: {str(e)}")
             return []
     
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self, deep: Optional[bool] = None, with_qa: Optional[bool] = None) -> Dict[str, Any]:
         """健康检查"""
         try:
             # 检查向量存储
-            vector_health = self.vector_store.health_check()
-            
-            # 测试LLM连接
-            test_response = self.llm.predict("Hello")
-            
-            # 测试完整的QA流程（如果向量存储中有数据）
+            vector_health = self.vector_store.health_check(deep=deep)
+            llm_status, qa_status = "skipped", "skipped"
             collection_info = self.vector_store.get_collection_info()
-            qa_test_result = "skipped"
+            if deep is not False:
+                self.llm.predict("Hello");
+                llm_status = "connected"
+                if (with_qa or (with_qa is None and collection_info.get("document_count", 0) > 0)):
+                    try: qa_status = "working" if self.ask("测试问题", 1).answer else "failed"
+                    except: qa_status = "failed"
             
-            if collection_info.get("document_count", 0) > 0:
-                try:
-                    test_qa = self.ask("测试问题", max_sources=1)
-                    qa_test_result = "working" if test_qa.answer else "failed"
-                except:
-                    qa_test_result = "failed"
-            
+            overall  = "healthy" if (vector_health.get("status")== "healthy" 
+                                     and llm_status in ("connected", "skipped") 
+                                     and qa_status in ("working", "skipped")) else "degraded"
             return {
-                "status": "healthy",
-                "llm": "connected",
+                "status": overall,
+                "llm": llm_status,
                 "vector_store": vector_health.get("status", "unknown"),
-                "qa_chain": qa_test_result,
+                "qa_chain": qa_status,
                 "collection_info": collection_info
             }
-            
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")
             return {

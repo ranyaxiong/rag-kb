@@ -8,16 +8,14 @@ from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from app.core.config import settings
 from app.api.documents import router as documents_router
 from app.api.qa import router as qa_router
 from app.api.cost_optimization import router as cost_router
+from app.api.auth import router as auth_router
 from app.models.schemas import HealthCheck
 
-# 加载环境变量
-load_dotenv()
 
 # 配置日志
 logging.basicConfig(
@@ -52,16 +50,17 @@ app = FastAPI(
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_origins=settings.get_cors_origins(),  # 从配置中获取允许的域名
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=settings.get_cors_methods(),  # 限制HTTP方法
+    allow_headers=settings.get_cors_headers(),  # 限制请求头
 )
 
 # 注册路由
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 app.include_router(qa_router, prefix="/api/qa", tags=["qa"])
 app.include_router(cost_router, prefix="/api/cost", tags=["cost"])
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
 
 @app.get("/")
@@ -80,7 +79,7 @@ async def health_check():
     try:
         # 检查基本配置
         checks = {
-            "openai_api_key": bool(settings.openai_api_key),
+            "api_key": bool(settings.get_api_key()),
             "upload_dir": os.path.exists(settings.upload_dir),
             "chroma_db_path": os.path.exists(settings.chroma_db_path)
         }

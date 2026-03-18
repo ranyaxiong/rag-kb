@@ -552,4 +552,139 @@ This codebase follows several key architectural principles:
 - **Informative Messages**: User-friendly error communication
 - **Comprehensive Logging**: Detailed error tracking for debugging
 
-This guide should provide everything needed for a Claude Code instance to quickly understand and productively work with this RAG knowledge base codebase. The system is well-architected with clear separation of concerns, comprehensive configuration options, and robust development practices.
+## 🛡️ Development Best Practices
+
+These practices help avoid incomplete integrations and ensure robust feature implementation:
+
+### 1. 立即验证原则 (Immediate Verification Principle)
+Never assume code changes work without immediate testing:
+
+```python
+# ❌ Wrong approach
+def implement_feature():
+    create_new_class()
+    modify_config()
+    # Test later...
+
+# ✅ Correct approach  
+def implement_feature():
+    create_new_class()
+    test_class_works()      # Verify immediately
+    modify_config() 
+    test_integration()      # Verify immediately
+```
+
+**Key Rules:**
+- Test each component immediately after creation
+- Verify configuration changes take effect
+- Don't batch all testing to the end
+
+### 2. 端到端测试驱动 (End-to-End Test-Driven Development)
+Always validate the complete workflow:
+
+```python
+# Create comprehensive integration tests
+def test_complete_workflow():
+    # Test: Upload → Process → Store → Retrieve → Query
+    # Verify each step works in the full chain
+```
+
+**Implementation:**
+- Create "smoke tests" for quick validation
+- Run full workflow tests after any integration changes
+- Don't trust "it should work" - prove it with tests
+- Test both success and failure scenarios
+
+### 3. 增量集成策略 (Incremental Integration Strategy)
+Build and integrate features step by step:
+
+```
+Step 1: Create new component + Unit tests ✅
+Step 2: Integrate to system + Integration tests ✅  
+Step 3: Verify existing functionality unchanged ✅
+Step 4: Verify new functionality works as expected ✅
+```
+
+**Guidelines:**
+- Never integrate multiple changes simultaneously
+- Validate each integration point separately
+- Maintain rollback capability at each step
+- Document integration dependencies
+
+### 4. 建立验证检查清单 (Establish Verification Checklists)
+Use systematic checklists for feature integration:
+
+**New Feature Integration Checklist:**
+- [ ] New classes instantiate correctly?
+- [ ] Configuration updated and effective?
+- [ ] Call chain routing correct?
+- [ ] End-to-end workflow functional?
+- [ ] Existing features unaffected?
+- [ ] Error handling working?
+- [ ] Performance acceptable?
+- [ ] Documentation updated?
+
+**PDF Processing Specific Checklist:**
+- [ ] Document processor uses new loader class?
+- [ ] Enhanced processor handles both text and scanned PDFs?
+- [ ] Fallback mechanisms work correctly?
+- [ ] OCR dependencies available and functional?
+- [ ] Error messages provide helpful guidance?
+
+### 5. 使用追踪和日志 (Use Tracing and Logging)
+Add strategic logging to verify execution paths:
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+
+def load_document(self, file_path):
+    loader_class = self.loaders['.pdf']
+    logger.info(f"Using PDF loader: {loader_class.__name__}")
+    
+    loader = loader_class(file_path)
+    logger.info(f"Loader initialized: {type(loader)}")
+    
+    documents = loader.load()
+    logger.info(f"Loaded {len(documents)} documents successfully")
+    
+    return documents
+```
+
+**Logging Strategy:**
+- Log critical decision points and class selections
+- Include timing information for performance monitoring
+- Log both successful operations and fallback activations
+- Use structured logging for easier analysis
+- Different log levels for development vs production
+
+**Verification Commands:**
+```bash
+# Quick integration verification
+python -c "
+from app.core.document_processor import DocumentProcessor
+proc = DocumentProcessor()
+print(f'PDF Loader: {proc.loaders[\".pdf\"].__name__}')
+"
+
+# Test class instantiation  
+python -c "
+from app.core.enhanced_pdf_processor import EnhancedPDFProcessor
+proc = EnhancedPDFProcessor()
+print(f'OCR Available: {proc.ocr_available}')
+"
+```
+
+### Integration Testing Commands
+```bash
+# Run integration verification
+python test_end_to_end.py
+
+# Test specific component
+python -m pytest tests/test_pdf_processing.py -v
+
+# Verify API integration
+curl http://localhost:8000/api/documents/stats/overview
+```
+
+This guide should provide everything needed for a Claude Code instance to quickly understand and productively work with this RAG knowledge base codebase. The system is well-architected with clear separation of concerns, comprehensive configuration options, and robust development practices that ensure reliable feature integration.

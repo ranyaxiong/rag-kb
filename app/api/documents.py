@@ -3,16 +3,21 @@
 """
 import logging
 import os
-from typing import List
+import uuid
+from typing import List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
+import asyncio
+import json
 
 from app.core.config import settings
 from app.core.document_processor import DocumentProcessor
 from app.core.vector_store import VectorStore
 from app.models.schemas import Document, ApiResponse
+from app.core.job_status import job_status
+from app.core.async_processor import async_processor
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +35,9 @@ def get_vector_store():
     return vector_store
 
 
-@router.post("/upload")
-async def upload_document(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
-):
-    """上传文档"""
+@router.post("/upload-async")
+async def upload_document_async(file: UploadFile = File(...)):
+    """真正的异步上传（线程池版本）"""
     try:
         # 检查文件类型
         if not doc_processor.is_supported_file(file.filename):
@@ -44,28 +46,88 @@ async def upload_document(
                 detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
             )
         
-        # 检查文件大小（限制10MB）
+        # 检查文件大小
         file_content = await file.read()
-        if len(file_content) > 100 * 1024 * 1024:
+        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+        if len(file_content) > max_size_bytes:
             raise HTTPException(
                 status_code=400,
-                detail="File size too large. Maximum size is 100MB."
+                detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
             )
         
-        # 检查是否为重复文件（基于文件名和大小）
-        existing_docs = get_vector_store().list_documents()
-        for doc in existing_docs:
-            if doc['filename'] == file.filename:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
-                )
+        # 高效重复检查（按文件名）
+        if get_vector_store().document_exists_by_filename(file.filename):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+            )
+        # 保存到临时目录
+        #file_content = await file.read()
+        temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
         
-        # 保存文件
+        # 生成文档ID
+        document_id = str(uuid.uuid4())
+        
+        # 初始化作业状态
+        job_status.init_job(document_id, file.filename, {
+            "processing_mode": "async_thread",
+            "stage": "queued"
+        })
+         
+        # 提交到线程池（立即返回）
+        async_processor.submit_task(document_id, temp_path, file.filename)
+        
+        return {
+            "success": True,
+            "message": "文件上传成功，已加入处理队列",
+            "document_id": document_id,
+            "status": "queued",
+            "processing_mode": "async",
+            "filename": file.filename
+        }
+        
+    except Exception as e:
+        logger.error(f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload")
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    async_processing: bool = False  # 保持原有同步处理作为选项
+):
+    """上传文档（兼容原有接口）"""
+    try:
+        # 检查文件类型
+        if not doc_processor.is_supported_file(file.filename):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
+            )
+        
+        # 检查文件大小
+        file_content = await file.read()
+        max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+        if len(file_content) > max_size_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
+            )
+        
+        # 高效重复检查（按文件名）
+        if get_vector_store().document_exists_by_filename(file.filename):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+            )
+        
+        # 保存文件（同步路径使用最终目录，兼容现有测试与逻辑）
         file_path = doc_processor.save_uploaded_file(file_content, file.filename)
         
         # 获取文件基本信息
         file_info = doc_processor.get_document_info(file_path)
+        
         if not file_info:
             raise HTTPException(status_code=500, detail="Failed to get file information")
         
@@ -80,18 +142,64 @@ async def upload_document(
             chunk_count=None
         )
         
-        # 后台处理文档
-        background_tasks.add_task(
-            process_document_background,
-            file_path,
-            file.filename
-        )
-        
-        return {
-            "success": True,
-            "message": "File uploaded successfully and processing started",
-            "document": doc_record
-        }
+        if async_processing:
+            # 异步处理：立即返回，后台处理
+            # 异步处理使用临时目录写入，后台搬迁
+            temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
+            # 生成document_id并初始化作业
+            import uuid
+            async_document_id = str(uuid.uuid4())
+            try:
+                job_status.init_job(async_document_id, file.filename, {
+                    "processing_mode": "async",
+                    "stage": "uploaded"
+                })
+            except Exception:
+                pass
+            background_tasks.add_task(
+                process_document_background,
+                temp_path,
+                file.filename,
+                async_document_id
+            )
+            
+            return {
+                "success": True,
+                "message": "File uploaded successfully and processing started in background",
+                "document": doc_record,
+                "document_id": async_document_id,
+                "processing_mode": "async"
+            }
+        else:
+            # 同步处理：等待完成后返回
+            logger.info(f"Processing document: {file.filename}")
+            result = doc_processor.process_document(file_path, file.filename)
+            
+            if result['status'] == 'completed':
+                # 添加到向量存储
+                get_vector_store().add_documents(result['chunks'])
+                doc_record.status = "completed"
+                doc_record.chunk_count = result['chunk_count']
+                logger.info(f"Document {file.filename} processed successfully")
+                
+                return {
+                    "success": True,
+                    "message": "File uploaded and processed successfully",
+                    "document": doc_record,
+                    "document_id": result['document_id'],
+                    "chunk_count": result['chunk_count'],
+                    "status": result['status'],
+                    "processing_mode": "sync"
+                }
+            else:
+                doc_record.status = "failed"
+                logger.error(f"Document processing failed: {result.get('error_message')}")
+                return {
+                    "success": False,
+                    "message": f"Document processing failed: {result.get('error_message')}",
+                    "document": doc_record,
+                    "processing_mode": "sync"
+                }
         
     except HTTPException:
         raise
@@ -100,23 +208,142 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-async def process_document_background(file_path: str, filename: str):
+async def process_document_background(file_path: str, filename: str, document_id: Optional[str] = None):
     """后台处理文档"""
     try:
-        logger.info(f"Processing document: {filename}")
+        logger.info(f"Processing document: {filename} (ID: {document_id})")
+        try:
+            if document_id:
+                job_status.mark_processing(document_id, progress=1, message="Job started")
+        except Exception:
+            pass
         
+        # 如果路径位于临时目录，先搬迁到最终上传目录
+        try:
+            if doc_processor.is_in_temp_dir(file_path):
+                real_path = doc_processor.move_to_upload_dir(file_path, filename)
+            else:
+                real_path = file_path
+            try:
+                if document_id:
+                    job_status.mark_processing(document_id, progress=10, message="File moved to upload dir", file_path=real_path)
+            except Exception:
+                pass
+        except Exception as move_err:
+            logger.error(f"Failed to move temp file before processing: {move_err}")
+            real_path = file_path
+
         # 处理文档
-        result = doc_processor.process_document(file_path, filename)
+        try:
+            if document_id:
+                job_status.mark_processing(document_id, progress=15, message="Processing document")
+        except Exception:
+            pass
+        result = doc_processor.process_document(real_path, filename)
         
         if result['status'] == 'completed':
+            # 添加document_id到chunks元数据
+            if document_id:
+                for chunk in result['chunks']:
+                    chunk.metadata['async_document_id'] = document_id
+            
             # 添加到向量存储
             get_vector_store().add_documents(result['chunks'])
-            logger.info(f"Document {filename} processed successfully")
+            logger.info(f"Document {filename} processed successfully (ID: {document_id})")
+            try:
+                if document_id:
+                    job_status.mark_completed(
+                        document_id,
+                        chunk_count=result.get('chunk_count', 0),
+                        filename=filename,
+                        processed_at=datetime.now().isoformat()
+                    )
+            except Exception:
+                pass
         else:
-            logger.error(f"Document processing failed: {result.get('error_message')}")
+            logger.error(f"Document processing failed (ID: {document_id}): {result.get('error_message')}")
+            try:
+                if document_id:
+                    job_status.mark_failed(document_id, error=result.get('error_message', 'Unknown error'), filename=filename)
+            except Exception:
+                pass
             
     except Exception as e:
-        logger.error(f"Error in background processing: {str(e)}")
+        logger.error(f"Error in background processing (ID: {document_id}): {str(e)}")
+        try:
+            if document_id:
+                job_status.mark_failed(document_id, error=str(e), filename=filename)
+        except Exception:
+            pass
+
+
+@router.get("/status/{document_id}")
+async def get_processing_status(document_id: str):
+    """获取处理状态（线程池版本）"""
+    try:
+        # 先检查线程池状态
+        thread_status = async_processor.get_task_status(document_id)
+        if thread_status:
+            return thread_status
+        
+        # 回退到job_status检查
+        status_info = job_status.get_job_status(document_id)
+        if not status_info:
+          #  raise HTTPException(status_code=404, detail="Document not found")
+            return {"status": "not found",
+            "message": "Document not found",
+            "document_id": document_id,
+            } 
+        return status_info
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/status/stream/{document_id}")
+async def stream_processing_status(document_id: str):
+    """SSE流式状态推送"""
+    async def event_generator():
+        try:
+            retry_count = 0
+            max_retries = 200  # 最多重试200次（5分钟），适应大型扫描版PDF的OCR处理
+
+            while retry_count < max_retries:
+                # 复用现有状态查询逻辑
+                status = async_processor.get_task_status(document_id)
+                if not status:
+                    status = job_status.get_job_status(document_id)
+
+                if status:
+                    yield f"data: {json.dumps(status)}\n\n"
+
+                    # 处理完成、失败或取消中时结束流（取消请求已发出即可结束SSE，避免前端长连接导致闪烁）
+                    if status.get("status") in ["completed", "failed", "cancelled", "cancelling"]:
+                        break
+                else:
+                    # 如果找不到状态，可能是刚提交还没开始处理，继续等待
+                    yield f"data: {json.dumps({'status': 'waiting', 'message': 'Waiting for processing to start...'})}\n\n"
+
+                await asyncio.sleep(1.5)  # 1.5秒轮询间隔
+                retry_count += 1
+
+            # 超时后发送超时状态
+            if retry_count >= max_retries:
+                yield f"data: {json.dumps({'status': 'timeout', 'message': 'Status check timeout'})}\n\n"
+
+        except Exception as e:
+            logger.error(f"SSE stream error for document {document_id}: {str(e)}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            
+        }
+    )
 
 
 @router.get("/", response_model=List[Document])
@@ -222,10 +449,8 @@ async def batch_upload_documents(
                     })
                     continue
                 
-                # 检查是否为重复文件
-                existing_docs = get_vector_store().list_documents()
-                file_exists = any(doc['filename'] == file.filename for doc in existing_docs)
-                if file_exists:
+                # 高效重复检查（按文件名）
+                if get_vector_store().document_exists_by_filename(file.filename):
                     results.append({
                         "filename": file.filename,
                         "success": False,
@@ -233,14 +458,14 @@ async def batch_upload_documents(
                     })
                     continue
                 
-                # 保存文件
+                # 保存到临时目录，后台搬迁再处理
                 file_content = await file.read()
-                file_path = doc_processor.save_uploaded_file(file_content, file.filename)
+                temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
                 
                 # 后台处理
                 background_tasks.add_task(
                     process_document_background,
-                    file_path,
+                    temp_path,
                     file.filename
                 )
                 
@@ -277,13 +502,32 @@ async def get_stats():
         collection_info = get_vector_store().get_collection_info()
         documents = get_vector_store().list_documents()
         
+        # 检查OCR能力（若缺少依赖则降级）
+        ocr_available = False
+        image_processing_available = False
+        enhanced_pdf_processing = False
+        try:
+            from app.core.enhanced_pdf_processor import EnhancedPDFProcessor
+            pdf_processor = EnhancedPDFProcessor()
+            ocr_available = getattr(pdf_processor, 'ocr_available', False)
+            image_processing_available = getattr(pdf_processor, 'image_extraction_available', False)
+            enhanced_pdf_processing = True
+        except Exception as e:
+            logger.warning(f"Enhanced PDF processor unavailable: {e}")
+
         stats = {
             "total_documents": len(documents),
             "total_chunks": collection_info.get("document_count", 0),
             "supported_formats": list(doc_processor.supported_extensions),
+            "processing_capabilities": {
+                "ocr_available": ocr_available,
+                "image_processing_available": image_processing_available,
+                "enhanced_pdf_processing": enhanced_pdf_processing
+            },
             "storage_info": {
                 "upload_dir": settings.upload_dir,
-                "chroma_db_path": settings.chroma_db_path
+                "chroma_db_path": settings.chroma_db_path,
+                "max_file_size_mb": settings.max_file_size_mb
             }
         }
         
@@ -292,3 +536,144 @@ async def get_stats():
     except Exception as e:
         logger.error(f"Error getting stats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+@router.get("/pdf-info/{document_id}")
+async def get_pdf_info(document_id: str):
+    """获取PDF文档的详细分析信息"""
+    try:
+        # 查找文档
+        documents = get_vector_store().list_documents()
+        doc_info = None
+        for doc in documents:
+            if doc['document_id'] == document_id:
+                doc_info = doc
+                break
+        
+        if not doc_info:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # 如果是PDF文档，提供详细分析
+        filename = doc_info.get('filename', '')
+        if filename.lower().endswith('.pdf'):
+            # 尝试找到文件路径（这里简化处理，实际可能需要更复杂的查找逻辑）
+            file_path = doc_info.get('file_path')
+            if not (file_path and os.path.exists(file_path)):
+                return {
+                    "success": False,
+                    "message": "PDF文件路径未找到或文件已移动"
+                }
+            try:
+                from app.core.enhanced_pdf_processor import EnhancedPDFProcessor
+                pdf_processor = EnhancedPDFProcessor()
+                processing_info = pdf_processor.get_processing_info(file_path)
+                return {
+                    "success": True,
+                    "document_id": document_id,
+                    "filename": filename,
+                    "processing_info": processing_info
+                }
+            except Exception as e:
+                logger.warning(f"Enhanced PDF analysis unavailable: {e}")
+                return {
+                    "success": False,
+                    "message": "增强型PDF分析不可用（缺少依赖或处理器不可用）"
+                }
+        else:
+            return {
+                "success": False,
+                "message": "该文档不是PDF格式"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting PDF info for {document_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get PDF info: {str(e)}")
+
+
+@router.post("/cancel/{document_id}")
+async def cancel_document_processing(document_id: str):
+    """
+    取消正在处理的文档任务
+
+    Args:
+        document_id: 文档ID（上传时返回的document_id）
+
+    Returns:
+        取消结果，包含成功状态和消息
+    """
+    try:
+        logger.info(f"Received cancel request for document: {document_id}")
+
+        # 调用异步处理器的取消方法
+        result = async_processor.cancel_task(document_id)
+
+        if result["success"]:
+            logger.info(f"Successfully cancelled task: {document_id}")
+            return {
+                "success": True,
+                "message": result["message"],
+                "document_id": document_id,
+                "status": result["status"]
+            }
+        else:
+            logger.warning(f"Failed to cancel task {document_id}: {result['message']}")
+            return {
+                "success": False,
+                "message": result["message"],
+                "document_id": document_id,
+                "status": result["status"]
+            }
+
+    except Exception as e:
+        logger.error(f"Error cancelling document processing for {document_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to cancel document processing: {str(e)}"
+        )
+
+
+@router.get("/cancel-status/{document_id}")
+async def get_cancel_status(document_id: str):
+    """
+    查询任务是否可以取消
+
+    Args:
+        document_id: 文档ID
+
+    Returns:
+        任务状态信息，包括是否可以取消
+    """
+    try:
+        # 从 job_status 获取任务状态
+        job_info = job_status.get(document_id)
+
+        if not job_info:
+            return {
+                "success": False,
+                "message": "任务不存在",
+                "cancellable": False
+            }
+
+        status = job_info.get("status", "unknown")
+
+        # 只有 processing 状态的任务可以取消
+        cancellable = status == "processing"
+
+        return {
+            "success": True,
+            "document_id": document_id,
+            "status": status,
+            "cancellable": cancellable,
+            "progress": job_info.get("progress", 0),
+            "message": job_info.get("message", "")
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting cancel status for {document_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cancel status: {str(e)}"
+        )
+
