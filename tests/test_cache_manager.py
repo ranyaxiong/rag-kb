@@ -433,6 +433,7 @@ class TestCacheManagerIntegration:
         for q, c in zip(questions, contexts):
             result = cache_manager.get_qa_cache(q, c, model_name)
             expected_answer = answers[questions.index(q)]
+            assert result is not None
             assert result["answer"] == expected_answer
 
         # 4. 检查统计信息
@@ -497,6 +498,7 @@ class TestCacheManagerIntegration:
         cache_manager.set_qa_cache("大源文档问题", "context", "答案", large_sources, "large-model")
 
         result = cache_manager.get_qa_cache("大源文档问题", "context", "large-model")
+        assert result is not None, "QA cache result should not be None"
         assert result["sources"] == large_sources
 
     @patch('app.core.cache_manager.settings')

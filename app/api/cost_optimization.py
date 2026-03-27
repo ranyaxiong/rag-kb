@@ -48,7 +48,7 @@ async def get_embedding_stats():
     """获取嵌入模型的缓存统计"""
     try:
         vector_store = VectorStore()
-        if hasattr(vector_store.embeddings, 'get_cache_stats'):
+        if hasattr(vector_store.embeddings, 'get_cache_stats') and vector_store.embeddings is not None:
             stats = vector_store.embeddings.get_cache_stats()
             return {
                 "success": True,

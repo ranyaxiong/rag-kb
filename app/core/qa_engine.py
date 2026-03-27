@@ -235,7 +235,7 @@ class QAEngine:
             
             # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
             k_effective = k if used_document_id else max(k, settings.max_sources * 2)
-            search_kwargs = {"k": k_effective}
+            search_kwargs: Dict[str, Any] = {"k": k_effective}
             if used_document_id:
                 search_kwargs["filter"] = {"document_id": used_document_id}
             # 构建 retriever：全库检索使用 MMR 增强多样性，降低单文档“淹没”其他文档的情况
@@ -329,8 +329,8 @@ class QAEngine:
     def get_relevant_documents(
         self, 
         question: str, 
-        k: int = None,
-        document_id: str = None
+        k: Optional[int] = None,
+        document_id: Optional[str] = None
     ) -> List[Document]:
         """获取相关文档（不生成答案）"""
         try:
@@ -363,8 +363,11 @@ class QAEngine:
             llm_status, qa_status = "skipped", "skipped"
             collection_info = self.vector_store.get_collection_info()
             if deep is not False:
-                self.llm.predict("Hello");
-                llm_status = "connected"
+                if self.llm:
+                    self.llm.predict("Hello")
+                    llm_status = "connected"
+                else:
+                    llm_status = "not_initialized"
                 if (with_qa or (with_qa is None and collection_info.get("document_count", 0) > 0)):
                     try: qa_status = "working" if self.ask("测试问题", 1).answer else "failed"
                     except: qa_status = "failed"
