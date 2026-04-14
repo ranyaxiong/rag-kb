@@ -35,7 +35,7 @@ class QAEngine:
     def _initialize_llm(self):
         """初始化大语言模型"""
         try:
-            overrides = self._overrides or {}
+            overrides = self._overrides
             # 1) API Key 优先使用请求覆盖，否则使用全局配置
             api_key = overrides.get("api_key") or settings.get_api_key()
             if overrides.get("api_base_url") and not overrides.get("api_key"):

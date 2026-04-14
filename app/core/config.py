@@ -130,25 +130,6 @@ class Settings(BaseSettings):
             logger.warning(f"Failed to create job status dir {self.job_status_dir}: {e}")
     
 
-    def get_jwt_secret(self) -> str:
-        if self.jwt_secret_file and os.path.exists(self.jwt_secret_file):
-            return open(self.jwt_secret_file, 'r', encoding="utf-8").read().strip()
-        
-        p = "/run/secrets/jwt_secret"
-        if os.path.exists(p):
-            return open(p, 'r', encoding="utf-8").read().strip()
-        
-        if self.jwt_secret_base64:
-            return base64.b64decode(self.jwt_secret_base64).decode('utf-8').strip()
-        
-
-    def get_admin_password_hash(self) -> str:
-        if self.admin_password_hash_file and os.path.exists(self.admin_password_hash_file):
-            return open(self.admin_password_hash_file, 'r', encoding="utf-8").read().strip()
-        
-        p = "/run/secrets/admin_password_hash"
-        if os.path.exists(p):
-            return open(p, 'r', encoding="utf-8").read().strip()
 
    
     def get_allowed_chat_base_urls(self) -> list[str]:
@@ -156,16 +137,7 @@ class Settings(BaseSettings):
         return [url.strip() for url in self.allowed_chat_base_urls.split(",") if url.strip()]
     
     
-    def get_model_config(self, overrides=None):
-        overrides = overrides or {}
-        cfg = {}
-        if overrides.get("api_base_url"):
-            url = overrides["api_base_url"]
-            if not is_safe_base_url(url, self.get_allowed_chat_base_urls()):
-                raise HTTPException(status_code=400, detail="LLM-Base-URL 不安全")
-            cfg["api_base_url"] = url
-        return cfg
-
+   
     def get_api_key(self) -> Optional[str]:
         """安全地获取API Key（支持多种提供商）"""
         # 方式1: 新的通用API key配置
@@ -323,7 +295,10 @@ class Settings(BaseSettings):
         if overrides.get("provider"):
             config["provider"] = overrides["provider"]
         if overrides.get("api_base_url"):
-            config["api_base_url"] = overrides["api_base_url"]
+            url = overrides["api_base_url"]
+            if not is_safe_base_url(url, self.get_allowed_chat_base_urls()):
+                raise HTTPException(status_code=400, detail="LLM-Base-URL 不安全")
+            config["api_base_url"] = url    
         if overrides.get("model"):
             config["chat_model"] = overrides["model"]
             
