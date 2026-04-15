@@ -69,7 +69,6 @@ from components.chat_interface import ChatInterface
 
 from utils.state_manager import StateManager
 from utils.settings_loader import load_user_settings as load_user_settings_shared, SettingsStatus
-from utils.realtime_update import setup_realtime_update_system
 
 # 配置页面
 st.set_page_config(
@@ -228,8 +227,8 @@ def add_floating_admin_button():
 BACKEND_URL_INTERNAL = os.getenv("BACKEND_URL", "http://localhost:8000")  # 服务器端调用
 BACKEND_URL_CLIENT = os.getenv("BACKEND_URL_CLIENT", "http://localhost:8000")  # 浏览器端调用
 
-# 初始化前端实时更新系统（用于无刷新更新统计与文档列表）
-setup_realtime_update_system(BACKEND_URL_CLIENT)
+# 文档管理接口已改为管理员鉴权，禁用浏览器侧匿名轮询。
+# 如需恢复前端实时更新，请在后续改造中为浏览器请求加入安全鉴权机制。
 
 
 def init_websocket_connection(client_id: str):
@@ -457,6 +456,14 @@ def display_quota_info():
         st.warning(f"配额信息获取错误: {str(e)}")
 
 
+def get_admin_auth_headers() -> dict:
+    """获取管理员鉴权请求头。"""
+    token = st.session_state.get("admin_jwt")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 def main():
     """主应用函数"""
     
@@ -487,6 +494,9 @@ def main():
         st.info(f"服务器端后端地址: {BACKEND_URL_INTERNAL}")
         st.info(f"浏览器端后端地址: {BACKEND_URL_CLIENT}")
         st.stop()
+
+    admin_headers = get_admin_auth_headers()
+    admin_logged_in = bool(admin_headers)
     
     # 侧边栏 - 模型与文档管理
     with st.sidebar:
@@ -614,12 +624,16 @@ def main():
 
         st.header("📄 文档管理")
 
-        # 文档上传组件
-        file_upload_component = FileUploadComponent(
-            BACKEND_URL_INTERNAL,
-            BACKEND_URL_CLIENT
-        )
-        file_upload_component.render()
+        if admin_logged_in:
+            # 文档上传组件
+            file_upload_component = FileUploadComponent(
+                BACKEND_URL_INTERNAL,
+                BACKEND_URL_CLIENT,
+                st.session_state.get("admin_jwt"),
+            )
+            file_upload_component.render()
+        else:
+            st.info("文档上传、删除与统计仅管理员可用，请先点击右上角 🔐 登录。")
     # --- Plan A: 原生轮询 + 智能降频（有任务时短周期自动重跑）---
     # try:
     #     StateManager.init_state()
@@ -673,16 +687,24 @@ Session State Values (after form):
         """)
 
         st.subheader("📊 统计信息")
-        try:
-            stats_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview")
-            if stats_response.status_code == 200:
-                stats = stats_response.json()
-                st.metric("总文档数", stats.get("total_documents", 0))
-                st.metric("总块数", stats.get("total_chunks", 0))
-            else:
-                st.error("获取统计信息失败")
-        except Exception as e:
-            st.error(f"统计信息获取错误: {str(e)}")
+        if admin_logged_in:
+            try:
+                stats_response = requests.get(
+                    f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview",
+                    headers=admin_headers,
+                )
+                if stats_response.status_code == 200:
+                    stats = stats_response.json()
+                    st.metric("总文档数", stats.get("total_documents", 0))
+                    st.metric("总块数", stats.get("total_chunks", 0))
+                elif stats_response.status_code in (401, 403):
+                    st.warning("管理员登录已失效，请重新登录后查看统计。")
+                else:
+                    st.error("获取统计信息失败")
+            except Exception as e:
+                st.error(f"统计信息获取错误: {str(e)}")
+        else:
+            st.caption("管理员登录后可查看文档统计。")
 
         # 配额信息显示
         st.subheader("📊 使用配额")
@@ -697,7 +719,7 @@ Session State Values (after form):
         st.stop()
 
     # 聊天界面组件（移出列布局）
-    chat_interface = ChatInterface(BACKEND_URL_INTERNAL)
+    chat_interface = ChatInterface(BACKEND_URL_INTERNAL, st.session_state.get("admin_jwt"))
     chat_interface.render()
 
     # 右侧栏 - 文档列表
@@ -714,44 +736,55 @@ Session State Values (after form):
             st.rerun()
 
         # 获取文档列表
-        try:
-            docs_response = requests.get(f"{BACKEND_URL_INTERNAL}/api/documents/")
-            if docs_response.status_code == 200:
-                documents = docs_response.json()
+        if admin_logged_in:
+            try:
+                docs_response = requests.get(
+                    f"{BACKEND_URL_INTERNAL}/api/documents/",
+                    headers=admin_headers,
+                )
+                if docs_response.status_code == 200:
+                    documents = docs_response.json()
 
-                if documents:
-                    for doc in documents:
-                        with st.expander(f"📄 {doc['filename']}", expanded=False):
-                            st.write(f"**文件类型:** {doc['file_type']}")
-                            st.write(f"**状态:** {doc['status']}")
-                            st.write(f"**块数量:** {doc.get('chunk_count', 'N/A')}")
-                            st.write(f"**上传时间:** {doc['upload_time'][:19]}")
+                    if documents:
+                        for doc in documents:
+                            with st.expander(f"📄 {doc['filename']}", expanded=False):
+                                st.write(f"**文件类型:** {doc['file_type']}")
+                                st.write(f"**状态:** {doc['status']}")
+                                st.write(f"**块数量:** {doc.get('chunk_count', 'N/A')}")
+                                st.write(f"**上传时间:** {doc['upload_time'][:19]}")
 
-                            # 一键聚焦此文档进行问答（设置检索范围）
-                            if st.button("🎯 基于此文档提问", key=f"focus_{doc['id']}"):
-                                st.session_state.selected_doc_id = doc['id']
-                                st.success("已限定检索范围到该文档。回到上方聊天区继续提问。")
-                                time.sleep(1)
-                                st.rerun()
-
-                            # 删除按钮
-                            if st.button(f"🗑️ 删除", key=f"delete_{doc['id']}"):
-                                delete_response = requests.delete(
-                                    f"{BACKEND_URL_INTERNAL}/api/documents/{doc['id']}"
-                                )
-                                if delete_response.status_code == 200:
-                                    st.success("文档删除成功!")
+                                # 一键聚焦此文档进行问答（设置检索范围）
+                                if st.button("🎯 基于此文档提问", key=f"focus_{doc['id']}"):
+                                    st.session_state.selected_doc_id = doc['id']
+                                    st.success("已限定检索范围到该文档。回到上方聊天区继续提问。")
                                     time.sleep(1)
                                     st.rerun()
-                                else:
-                                    st.error("文档删除失败")
-                else:
-                    st.info("暂无上传的文档")
-            else:
-                st.error("获取文档列表失败")
 
-        except Exception as e:
-            st.error(f"文档列表获取错误: {str(e)}")
+                                # 删除按钮
+                                if st.button(f"🗑️ 删除", key=f"delete_{doc['id']}"):
+                                    delete_response = requests.delete(
+                                        f"{BACKEND_URL_INTERNAL}/api/documents/{doc['id']}",
+                                        headers=admin_headers,
+                                    )
+                                    if delete_response.status_code == 200:
+                                        st.success("文档删除成功!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    elif delete_response.status_code in (401, 403):
+                                        st.error("管理员登录已失效，请重新登录后再删除文档。")
+                                    else:
+                                        st.error("文档删除失败")
+                    else:
+                        st.info("暂无上传的文档")
+                elif docs_response.status_code in (401, 403):
+                    st.warning("管理员登录已失效，请重新登录后查看文档列表。")
+                else:
+                    st.error("获取文档列表失败")
+
+            except Exception as e:
+                st.error(f"文档列表获取错误: {str(e)}")
+        else:
+            st.info("文档列表与删除权限仅管理员可用。")
 
 
 if __name__ == "__main__":

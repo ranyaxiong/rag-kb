@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password_hash: str | None = None  
     admin_password_hash_file: str | None = None
+    admin_password_hash_base64: str | None = None
                
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -222,6 +223,71 @@ class Settings(BaseSettings):
     def get_openai_api_key(self) -> Optional[str]:
         """向后兼容：获取OpenAI API Key"""
         return self.get_api_key()
+    
+    def _read_secret_from_sources(
+        self,
+        *,
+        direct_value: Optional[str],
+        file_path: Optional[str],
+        base64_value: Optional[str],
+        secret_name: str,
+    ) -> Optional[str]:
+        """从直接值/文件/base64中读取敏感配置。"""
+        if direct_value and direct_value.strip():
+            return direct_value.strip()
+
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    value = f.read().strip()
+                    if value:
+                        logger.info(f"{secret_name} loaded from file: {file_path}")
+                        return value
+            except Exception as e:
+                logger.warning(f"Failed to read {secret_name} from file {file_path}: {e}")
+
+        if base64_value:
+            try:
+                value = base64.b64decode(base64_value).decode("utf-8").strip()
+                if value:
+                    logger.info(f"{secret_name} loaded from base64 environment variable")
+                    return value
+            except Exception as e:
+                logger.warning(f"Failed to decode base64 {secret_name}: {e}")
+
+        return None
+
+    def get_jwt_secret(self) -> str:
+        """获取JWT密钥，不存在时抛出异常以阻止不安全启动。"""
+        secret = self._read_secret_from_sources(
+            direct_value=self.jwt_secret,
+            file_path=self.jwt_secret_file,
+            base64_value=self.jwt_secret_base64,
+            secret_name="JWT secret",
+        )
+
+        if not secret:
+            raise RuntimeError(
+                "JWT secret is not configured. Please set JWT_SECRET, JWT_SECRET_FILE, or JWT_SECRET_BASE64."
+            )
+
+        return secret
+
+    def get_admin_password_hash(self) -> str:
+        """获取管理员密码哈希，不存在时抛出异常以阻止不安全登录。"""
+        password_hash = self._read_secret_from_sources(
+            direct_value=self.admin_password_hash,
+            file_path=self.admin_password_hash_file,
+            base64_value=self.admin_password_hash_base64,
+            secret_name="admin password hash",
+        )
+
+        if not password_hash:
+            raise RuntimeError(
+                "Admin password hash is not configured. Please set ADMIN_PASSWORD_HASH, ADMIN_PASSWORD_HASH_FILE, or ADMIN_PASSWORD_HASH_BASE64."
+            )
+
+        return password_hash
     
     def get_embedding_api_key(self) -> Optional[str]:
         """获取嵌入模型的API Key（优先使用专用配置，其次按提供商回退，最后复用通用API Key）"""

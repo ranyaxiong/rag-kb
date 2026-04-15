@@ -168,6 +168,57 @@ class TestSettings:
         # 应该返回None而不是抛出异常
         assert settings.get_api_key() is None
 
+    def test_get_jwt_secret_from_direct_config(self, temp_dirs):
+        """测试从直接配置获取JWT密钥"""
+        upload_dir, chroma_dir = temp_dirs
+
+        settings = Settings(
+            jwt_secret="test-jwt-secret",
+            upload_dir=upload_dir,
+            chroma_db_path=chroma_dir
+        )
+
+        assert settings.get_jwt_secret() == "test-jwt-secret"
+
+    def test_get_jwt_secret_missing_raises(self, temp_dirs):
+        """测试JWT密钥缺失时抛出异常"""
+        upload_dir, chroma_dir = temp_dirs
+
+        settings = Settings(
+            upload_dir=upload_dir,
+            chroma_db_path=chroma_dir
+        )
+
+        with pytest.raises(RuntimeError):
+            settings.get_jwt_secret()
+
+    def test_get_admin_password_hash_from_base64(self, temp_dirs):
+        """测试从base64获取管理员密码哈希"""
+        upload_dir, chroma_dir = temp_dirs
+
+        encoded_hash = base64.b64encode(
+            b"$argon2id$v=19$m=65536,t=3,p=4$base64$hash"
+        ).decode()
+        settings = Settings(
+            admin_password_hash_base64=encoded_hash,
+            upload_dir=upload_dir,
+            chroma_db_path=chroma_dir
+        )
+
+        assert settings.get_admin_password_hash() == "$argon2id$v=19$m=65536,t=3,p=4$base64$hash"
+
+    def test_get_admin_password_hash_missing_raises(self, temp_dirs):
+        """测试管理员密码哈希缺失时抛出异常"""
+        upload_dir, chroma_dir = temp_dirs
+
+        settings = Settings(
+            upload_dir=upload_dir,
+            chroma_db_path=chroma_dir
+        )
+
+        with pytest.raises(RuntimeError):
+            settings.get_admin_password_hash()
+
     def test_get_api_key_backward_compatibility(self, temp_dirs):
         """测试向后兼容的OpenAI API key"""
         upload_dir, chroma_dir = temp_dirs

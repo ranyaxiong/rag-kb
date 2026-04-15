@@ -7,11 +7,12 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import StreamingResponse
 import asyncio
 import json
 
+from app.api.auth import require_admin
 from app.core.config import settings
 from app.core.document_processor import DocumentProcessor
 from app.core.vector_store import VectorStore
@@ -36,7 +37,7 @@ def get_vector_store():
 
 
 @router.post("/upload-async")
-async def upload_document_async(file: UploadFile = File(...)):
+async def upload_document_async(file: UploadFile = File(...), _: dict = Depends(require_admin)):
     """真正的异步上传（线程池版本）"""
     try:
         # 检查文件类型
@@ -95,7 +96,8 @@ async def upload_document_async(file: UploadFile = File(...)):
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    async_processing: bool = False  # 保持原有同步处理作为选项
+    async_processing: bool = False,  # 保持原有同步处理作为选项
+    _: dict = Depends(require_admin),
 ):
     """上传文档（兼容原有接口）"""
     try:
@@ -278,7 +280,7 @@ async def process_document_background(file_path: str, filename: str, document_id
 
 
 @router.get("/status/{document_id}")
-async def get_processing_status(document_id: str):
+async def get_processing_status(document_id: str, _: dict = Depends(require_admin)):
     """获取处理状态（线程池版本）"""
     try:
         # 先检查线程池状态
@@ -301,7 +303,7 @@ async def get_processing_status(document_id: str):
 
 
 @router.get("/status/stream/{document_id}")
-async def stream_processing_status(document_id: str):
+async def stream_processing_status(document_id: str, _: dict = Depends(require_admin)):
     """SSE流式状态推送"""
     async def event_generator():
         try:
@@ -347,7 +349,7 @@ async def stream_processing_status(document_id: str):
 
 
 @router.get("/", response_model=List[Document])
-async def list_documents():
+async def list_documents(_: dict = Depends(require_admin)):
     """获取文档列表"""
     try:
         documents = get_vector_store().list_documents()
@@ -374,7 +376,7 @@ async def list_documents():
 
 
 @router.get("/{document_id}")
-async def get_document(document_id: str):
+async def get_document(document_id: str, _: dict = Depends(require_admin)):
     """获取文档详情"""
     try:
         documents = get_vector_store().list_documents()
@@ -402,7 +404,7 @@ async def get_document(document_id: str):
 
 
 @router.delete("/{document_id}")
-async def delete_document(document_id: str):
+async def delete_document(document_id: str, _: dict = Depends(require_admin)):
     """删除文档"""
     try:
         # 从向量存储中删除
@@ -426,7 +428,8 @@ async def delete_document(document_id: str):
 @router.post("/batch-upload")
 async def batch_upload_documents(
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    _: dict = Depends(require_admin),
 ):
     """批量上传文档"""
     try:
@@ -496,7 +499,7 @@ async def batch_upload_documents(
 
 
 @router.get("/stats/overview")
-async def get_stats():
+async def get_stats(_: dict = Depends(require_admin)):
     """获取文档统计信息"""
     try:
         collection_info = get_vector_store().get_collection_info()
@@ -539,7 +542,7 @@ async def get_stats():
 
 
 @router.get("/pdf-info/{document_id}")
-async def get_pdf_info(document_id: str):
+async def get_pdf_info(document_id: str, _: dict = Depends(require_admin)):
     """获取PDF文档的详细分析信息"""
     try:
         # 查找文档
@@ -593,7 +596,7 @@ async def get_pdf_info(document_id: str):
 
 
 @router.post("/cancel/{document_id}")
-async def cancel_document_processing(document_id: str):
+async def cancel_document_processing(document_id: str, _: dict = Depends(require_admin)):
     """
     取消正在处理的文档任务
 
@@ -635,7 +638,7 @@ async def cancel_document_processing(document_id: str):
 
 
 @router.get("/cancel-status/{document_id}")
-async def get_cancel_status(document_id: str):
+async def get_cancel_status(document_id: str, _: dict = Depends(require_admin)):
     """
     查询任务是否可以取消
 

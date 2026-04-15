@@ -4,9 +4,29 @@
 import pytest
 import time
 import threading
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
+import jwt
+
 from app.core.async_processor import AsyncDocumentProcessor
 from app.core.job_status import JobStatusManager
+from app.core.config import settings
+
+
+def _admin_headers() -> dict:
+    settings.jwt_secret = "test-jwt-secret"
+    exp = datetime.now(timezone.utc) + timedelta(minutes=30)
+    token = jwt.encode(
+        {
+            "sub": settings.admin_username,
+            "role": "admin",
+            "iat": datetime.now(timezone.utc),
+            "exp": exp,
+        },
+        settings.get_jwt_secret(),
+        algorithm=settings.jwt_algorithm,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 class TestCancelFunctionality:
@@ -150,7 +170,10 @@ class TestCancelIntegration:
         client = TestClient(app)
         
         # 测试取消不存在的任务
-        response = client.post("/api/documents/cancel/nonexistent-id")
+        response = client.post(
+            "/api/documents/cancel/nonexistent-id",
+            headers=_admin_headers(),
+        )
         assert response.status_code == 200
         result = response.json()
         assert result["success"] is False
@@ -164,7 +187,10 @@ class TestCancelIntegration:
         client = TestClient(app)
         
         # 测试查询不存在的任务
-        response = client.get("/api/documents/cancel-status/nonexistent-id")
+        response = client.get(
+            "/api/documents/cancel-status/nonexistent-id",
+            headers=_admin_headers(),
+        )
         assert response.status_code == 200
         result = response.json()
         assert result["success"] is False

@@ -5,10 +5,31 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 import json
+from datetime import datetime, timedelta, timezone
+
+import jwt
 
 from app.main import app
+from app.core.config import settings
+
 
 client = TestClient(app)
+
+
+def _admin_headers() -> dict:
+    settings.jwt_secret = "test-jwt-secret"
+    exp = datetime.now(timezone.utc) + timedelta(minutes=30)
+    token = jwt.encode(
+        {
+            "sub": settings.admin_username,
+            "role": "admin",
+            "iat": datetime.now(timezone.utc),
+            "exp": exp,
+        },
+        settings.get_jwt_secret(),
+        algorithm=settings.jwt_algorithm,
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 class TestHealthAPI:
@@ -66,6 +87,11 @@ class TestHealthAPI:
 class TestDocumentAPI:
     """文档管理API测试"""
 
+    def test_document_endpoints_require_admin(self):
+        """测试文档管理接口需要管理员鉴权"""
+        response = client.get("/api/documents/")
+        assert response.status_code == 401
+
     @patch('app.api.documents.doc_processor')
     def test_upload_document_success(self, mock_processor):
         """测试成功上传文档"""
@@ -93,7 +119,7 @@ class TestDocumentAPI:
 
             # 模拟文件上传
             files = {"file": ("test.txt", b"test content", "text/plain")}
-            response = client.post("/api/documents/upload", files=files)
+            response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
 
             assert response.status_code == 200
             data = response.json()
@@ -106,18 +132,18 @@ class TestDocumentAPI:
         mock_processor.is_supported_file.return_value = False
 
         files = {"file": ("test.xyz", b"test content", "application/xyz")}
-        response = client.post("/api/documents/upload", files=files)
+        response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
 
         assert response.status_code == 400
         assert "Unsupported file type" in response.json()["detail"]
 
     def test_upload_large_file(self):
         """测试上传超大文件"""
-        # 创建超过10MB的文件内容
-        large_content = b"x" * (11 * 1024 * 1024)  # 11MB
-
-        files = {"file": ("large.txt", large_content, "text/plain")}
-        response = client.post("/api/documents/upload", files=files)
+        with patch.object(settings, "max_file_size_mb", 1):
+            # 使用较小内容稳定触发超限，避免进入耗时文档处理流程
+            large_content = b"x" * (2 * 1024 * 1024)  # 2MB
+            files = {"file": ("large.txt", large_content, "text/plain")}
+            response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
 
         assert response.status_code == 400
         assert "File size too large" in response.json()["detail"]
@@ -135,7 +161,7 @@ class TestDocumentAPI:
             }
         ]
 
-        response = client.get("/api/documents/")
+        response = client.get("/api/documents/", headers=_admin_headers())
         assert response.status_code == 200
         documents = response.json()
         assert len(documents) == 1
@@ -152,7 +178,7 @@ class TestDocumentAPI:
             }
         ]
 
-        response = client.get("/api/documents/doc1")
+        response = client.get("/api/documents/doc1", headers=_admin_headers())
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -163,7 +189,7 @@ class TestDocumentAPI:
         """测试获取文档详情 - 文档不存在"""
         mock_vector_store.list_documents.return_value = []
 
-        response = client.get("/api/documents/nonexistent")
+        response = client.get("/api/documents/nonexistent", headers=_admin_headers())
         assert response.status_code == 404
         assert "Document not found" in response.json()["detail"]
 
@@ -172,7 +198,7 @@ class TestDocumentAPI:
         """测试成功删除文档"""
         mock_vector_store.delete_document_by_id.return_value = True
 
-        response = client.delete("/api/documents/doc1")
+        response = client.delete("/api/documents/doc1", headers=_admin_headers())
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -182,7 +208,7 @@ class TestDocumentAPI:
         """测试删除不存在的文档"""
         mock_vector_store.delete_document_by_id.return_value = False
 
-        response = client.delete("/api/documents/nonexistent")
+        response = client.delete("/api/documents/nonexistent", headers=_admin_headers())
         assert response.status_code == 404
 
 
@@ -355,9 +381,8 @@ class TestAPIIntegration:
         mock_vector_store.document_exists_by_filename.return_value = False
         mock_vector_store.add_documents.return_value = True
 
-
         files = {"file": ("test.txt", b"test content", "text/plain")}
-        upload_response = client.post("/api/documents/upload", files=files)
+        upload_response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
         assert upload_response.status_code == 200
 
         # disable quota limit for this integration test

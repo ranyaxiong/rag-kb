@@ -4,13 +4,15 @@
 import streamlit as st
 import requests
 import time
+from typing import Optional
 
 
 class ChatInterface:
     """聊天界面组件类"""
     
-    def __init__(self, backend_url: str):
+    def __init__(self, backend_url: str, admin_token: Optional[str] = None):
         self.backend_url = backend_url
+        self.admin_token = admin_token
         
         # 初始化会话状态
         if "messages" not in st.session_state:
@@ -137,7 +139,10 @@ class ChatInterface:
         # 检索范围选择（限定到指定文档可避免跨文档混入）
         with st.expander("🔎 检索范围", expanded=False):
             try:
-                resp = requests.get(f"{self.backend_url}/api/documents/")
+                headers = {}
+                if self.admin_token:
+                    headers = {"Authorization": f"Bearer {self.admin_token}"}
+                resp = requests.get(f"{self.backend_url}/api/documents/", headers=headers)
                 options = ["全库（默认）"]
                 docs = []
                 if resp.status_code == 200:

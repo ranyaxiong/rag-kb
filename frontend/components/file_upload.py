@@ -3,17 +3,18 @@
 """
 import streamlit as st
 import requests
-from typing import List
+from typing import Dict, List, Optional
 from utils.state_manager import StateManager, AutoRefreshMixin
 
 
 class FileUploadComponent(AutoRefreshMixin):
     """文件上传组件类 - 支持实时更新"""
 
-    def __init__(self, backend_url: str, client_url: str = None):
+    def __init__(self, backend_url: str, client_url: str = None, admin_token: Optional[str] = None):
         super().__init__("file_upload", cache_duration=10)  # 10秒缓存
         self.backend_url = backend_url  # 服务器端调用用
         self.client_url = client_url or backend_url  # 浏览器端调用用
+        self.admin_token = admin_token
         self.supported_formats = [".pdf", ".docx", ".doc", ".txt", ".md"]
 
         # 初始化状态管理
@@ -33,11 +34,22 @@ class FileUploadComponent(AutoRefreshMixin):
             st.session_state.single_file_upload_key = 0
         if "multiple_files_upload_key" not in st.session_state:
             st.session_state.multiple_files_upload_key = 0
+
+    def _auth_headers(self) -> Dict[str, str]:
+        """构建管理员鉴权请求头。"""
+        token = self.admin_token or st.session_state.get("admin_jwt")
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
     
     def _get_max_file_size_mb(self) -> int:
         """从后端获取允许的最大文件大小，失败回退到50MB"""
         try:
-            resp = requests.get(f"{self.backend_url}/api/documents/stats/overview", timeout=5)
+            resp = requests.get(
+                f"{self.backend_url}/api/documents/stats/overview",
+                headers=self._auth_headers(),
+                timeout=5,
+            )
             if resp.status_code == 200:
                 data = resp.json()
                 return int(data.get("storage_info", {}).get("max_file_size_mb", 50))
@@ -64,6 +76,7 @@ class FileUploadComponent(AutoRefreshMixin):
         try:
             status_resp = requests.get(
                 f"{self.backend_url}/api/documents/cancel-status/{document_id}",
+                headers=self._auth_headers(),
                 timeout=5,
             )
             if status_resp.status_code == 200:
@@ -93,35 +106,13 @@ class FileUploadComponent(AutoRefreshMixin):
         try:
             response = requests.post(
                 f"{self.backend_url}/api/documents/cancel/{document_id}",
+                headers=self._auth_headers(),
                 timeout=5
             )
             if response.status_code == 200 and (response.json() or {}).get('success'):
                 server_ok = True
         except Exception:
             server_ok = False
-
-        if not server_ok:
-            # 兜底：让浏览器直接调用后端（解决容器内 DNS/HTTP 问题）
-            try:
-                st.components.v1.html(
-                    f"""
-                    <script>
-                    (async function() {{
-                      try {{
-                        const resp = await fetch('{self.client_url}/api/documents/cancel/{document_id}', {{
-                          method: 'POST',
-                          credentials: 'include'
-                        }});
-                        console.log('Browser cancel resp status:', resp.status);
-                      }} catch (e) {{ console.error('Browser cancel failed', e); }}
-                    }})();
-                    </script>
-                    """,
-                    height=0,
-                    width=0
-                )
-            except Exception:
-                pass
 
         # 无论服务端是否成功，先本地清理，避免继续轮询造成闪烁
         try:
@@ -141,6 +132,7 @@ class FileUploadComponent(AutoRefreshMixin):
         try:
             response = requests.get(
                 f"{self.backend_url}/api/documents/status/{document_id}",
+                headers=self._auth_headers(),
                 timeout=10
             )
 
@@ -200,6 +192,7 @@ class FileUploadComponent(AutoRefreshMixin):
             try:
                 resp = requests.get(
                     f"{self.backend_url}/api/documents/status/{doc_id}",
+                    headers=self._auth_headers(),
                     timeout=5,
                 )
                 if resp.status_code == 200:
@@ -317,6 +310,7 @@ class FileUploadComponent(AutoRefreshMixin):
                 response = requests.post(
                     f"{self.backend_url}/api/documents/upload-async",
                     files=files,
+                    headers=self._auth_headers(),
                     timeout=(10, read_timeout)  # (连接超时, 读取超时)
                 )
                 
@@ -371,15 +365,7 @@ class FileUploadComponent(AutoRefreshMixin):
                     # 显示基本信息
                     if result.get('document_id'):
                         st.code(f"文档ID: {result['document_id']}")
-                        document_id = result.get('document_id')
-                        if document_id:
-                            # 获取用户选择的刷新模式
-                            refresh_mode = st.session_state.get('realtime_refresh_mode', '实时更新（推荐）')
-
-                            # 使用真正的实时更新
-                            from utils.realtime_update import create_realtime_document_monitor
-                            monitor_html = create_realtime_document_monitor(document_id, self.client_url, refresh_mode)
-                            st.components.v1.html(monitor_html, height=90)
+                        st.caption("可在“正在处理的文档”中使用“📊 状态”查看最新进度。")
                     if result.get('filename'):
                         st.code(f"文件名: {result['filename']}")
                     # 上传/排队成功后，重置单文件上传控件
@@ -421,6 +407,7 @@ class FileUploadComponent(AutoRefreshMixin):
                 response = requests.post(
                     f"{self.backend_url}/api/documents/batch-upload",
                     files=files,
+                    headers=self._auth_headers(),
                     timeout=900  # 批量上传增加到15分钟
                 )
                 

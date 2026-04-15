@@ -9,7 +9,6 @@ st.set_page_config(
     page_icon="🔐",
     layout="wide"
 )
-st.sidebar.write(f"Backend URL: {BACKEND}")
 
 
 def check_token_validity():
@@ -58,9 +57,6 @@ def admin_login_form():
                     data={"username": u, "password": p},
                     timeout=10
                 )
-                st.write(f"状态码: {r.status_code}")
-                st.write(f"响应头: {r.headers}")
-                st.write(f"响应内容: {r.text[:500]}")  # 显示前500个字符
                 if r.ok:
                     token_data = r.json()
                     st.session_state["admin_jwt"] = token_data["access_token"]
@@ -168,25 +164,34 @@ def admin_panel():
         st.subheader("系统统计")
         
         try:
-            response = requests.get(f"{BACKEND}/api/documents/stats", timeout=10)
+            tok = st.session_state.get("admin_jwt")
+            h = {"Authorization": f"Bearer {tok}"} if tok else {}
+            response = requests.get(f"{BACKEND}/api/documents/stats/overview", headers=h, timeout=10)
             if response.status_code == 200:
                 stats = response.json()
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric("📄 总文档数", stats.get("document_count", 0))
+                    st.metric("📄 总文档数", stats.get("total_documents", 0))
                 with col2:
-                    st.metric("🔢 向量数", stats.get("vector_count", 0))
+                    st.metric("🔢 总块数", stats.get("total_chunks", 0))
                 with col3:
-                    storage_mb = stats.get("storage_mb", 0)
-                    st.metric("💾 存储空间", f"{storage_mb:.2f} MB")
+                    storage = stats.get("storage_info", {}) or {}
+                    st.metric("� 上传目录", storage.get("upload_dir", "N/A"))
                 with col4:
-                    st.metric("📦 集合数", stats.get("collection_count", 1))
+                    st.metric("⚙️ 文件上限", f"{storage.get('max_file_size_mb', 'N/A')} MB")
                 
                 st.markdown("---")
                 st.json(stats)
+            elif response.status_code == 401:
+                st.error("❌ 未登录或登录已过期，请重新登录")
+                if "admin_jwt" in st.session_state:
+                    del st.session_state["admin_jwt"]
+                st.rerun()
+            elif response.status_code == 403:
+                st.error("❌ 权限不足，当前账户不是管理员")
             else:
-                st.error("无法获取系统统计")
+                st.error(f"无法获取系统统计 (HTTP {response.status_code})")
         except Exception as e:
             st.error(f"获取统计失败: {str(e)}")
     
