@@ -95,8 +95,10 @@ class TestDocumentAPI:
     @patch('app.api.documents.doc_processor')
     def test_upload_document_success(self, mock_processor):
         """测试成功上传文档"""
+        mock_processor.validate_filename.return_value = "test.txt"
         # 模拟处理器
         mock_processor.is_supported_file.return_value = True
+        mock_processor.compute_content_hash.return_value = "hash-1"
         mock_processor.save_uploaded_file.return_value = "/path/to/file.txt"
         mock_processor.get_document_info.return_value = {
             'file_type': '.txt',
@@ -114,7 +116,7 @@ class TestDocumentAPI:
         with patch('app.api.documents.get_vector_store') as mock_get_vs:
             mock_vs = MagicMock()
             mock_vs.add_documents.return_value = True
-            mock_vs.document_exists_by_filename.return_value = False
+            mock_vs.document_exists_by_content_hash.return_value = False
             mock_get_vs.return_value = mock_vs
 
             # 模拟文件上传
@@ -129,6 +131,7 @@ class TestDocumentAPI:
     @patch('app.api.documents.doc_processor')
     def test_upload_unsupported_file(self, mock_processor):
         """测试上传不支持的文件格式"""
+        mock_processor.validate_filename.return_value = "test.xyz"
         mock_processor.is_supported_file.return_value = False
 
         files = {"file": ("test.xyz", b"test content", "application/xyz")}
@@ -142,11 +145,53 @@ class TestDocumentAPI:
         with patch.object(settings, "max_file_size_mb", 1):
             # 使用较小内容稳定触发超限，避免进入耗时文档处理流程
             large_content = b"x" * (2 * 1024 * 1024)  # 2MB
+
             files = {"file": ("large.txt", large_content, "text/plain")}
             response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
 
         assert response.status_code == 400
         assert "File size too large" in response.json()["detail"]
+
+    def test_upload_reject_path_traversal_filename(self):
+        """测试危险文件名被拒绝"""
+        files = {"file": ("../../evil.txt", b"test content", "text/plain")}
+        response = client.post("/api/documents/upload", files=files, headers=_admin_headers())
+
+        assert response.status_code == 400
+        assert "Invalid filename" in response.json()["detail"]
+
+    @patch('app.api.documents.doc_processor')
+    def test_upload_duplicate_content_hash_conflict(self, mock_processor):
+        """测试同内容不同文件名上传返回409"""
+        mock_processor.validate_filename.side_effect = ["a.txt", "b.md"]
+        mock_processor.is_supported_file.return_value = True
+        mock_processor.compute_content_hash.return_value = "same-hash"
+        mock_processor.save_uploaded_file.return_value = "/path/to/file.txt"
+        mock_processor.get_document_info.return_value = {
+            'file_type': '.txt',
+            'file_size': 12,
+        }
+        mock_processor.process_document.return_value = {
+            'status': 'completed',
+            'chunks': [],
+            'chunk_count': 1,
+            'document_id': 'doc-123'
+        }
+
+        with patch('app.api.documents.get_vector_store') as mock_get_vs:
+            mock_vs = MagicMock()
+            mock_vs.add_documents.return_value = True
+            mock_vs.document_exists_by_content_hash.side_effect = [False, True]
+            mock_get_vs.return_value = mock_vs
+
+            files1 = {"file": ("a.txt", b"same content", "text/plain")}
+            response1 = client.post("/api/documents/upload", files=files1, headers=_admin_headers())
+            assert response1.status_code == 200
+
+            files2 = {"file": ("b.md", b"same content", "text/markdown")}
+            response2 = client.post("/api/documents/upload", files=files2, headers=_admin_headers())
+            assert response2.status_code == 409
+            assert "identical content" in response2.json()["detail"]
 
     @patch('app.api.documents.vector_store')
     def test_list_documents(self, mock_vector_store):
@@ -359,12 +404,15 @@ class TestAPIIntegration:
     def test_full_workflow(self, mock_qa_engine, mock_vector_store, mock_processor):
         """测试完整工作流程：上传文档 -> 问答"""
         # 1. 模拟文档上传
+        mock_processor.validate_filename.return_value = "test.txt"
         mock_processor.is_supported_file.return_value = True
+        mock_processor.compute_content_hash.return_value = "hash-1"
         mock_processor.save_uploaded_file.return_value = "/path/to/file.txt"
         mock_processor.get_document_info.return_value = {
             'file_type': '.txt',
             'file_size': 1024,
         }
+
         # 返回同步处理完成的结果，避免接口返回失败
         mock_processor.process_document.return_value = {
             'status': 'completed',
@@ -378,7 +426,7 @@ class TestAPIIntegration:
         qa_module.vector_store = MagicMock()
         qa_module.vector_store.get_collection_info.return_value = {"document_count": 1}
 
-        mock_vector_store.document_exists_by_filename.return_value = False
+        mock_vector_store.document_exists_by_content_hash.return_value = False
         mock_vector_store.add_documents.return_value = True
 
         files = {"file": ("test.txt", b"test content", "text/plain")}

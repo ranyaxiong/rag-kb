@@ -384,6 +384,18 @@ class VectorStore:
             logger.warning(f"Error checking filename existence: {str(e)}")
             return False
 
+    def document_exists_by_content_hash(self, content_hash: str) -> bool:
+        """使用元数据精确查询判断内容哈希是否已存在"""
+        self._ensure_chroma_client_only()
+        try:
+            collection = self.chroma_client.get_collection(self.collection_name)
+            results = collection.get(where={"content_hash": content_hash})
+            ids = results.get("ids") if isinstance(results, dict) else None
+            return bool(ids)
+        except Exception as e:
+            logger.warning(f"Error checking content hash existence: {str(e)}")
+            return False
+
     def _get_document_summary_by_key(self, key: str, value: str) -> Optional[Dict[str, Any]]:
         """根据某个元数据键查询并汇总文档信息（轻量，避免初始化embeddings）"""
         self._ensure_chroma_client_only()
@@ -417,7 +429,7 @@ class VectorStore:
     def get_summary_by_document_id(self, document_id: str) -> Optional[Dict[str, Any]]:
         """按内部document_id查询文档汇总（轻量）"""
         return self._get_document_summary_by_key("document_id", document_id)
-    
+
     def health_check(self, deep: Optional[bool] = None) -> Dict[str, Any]:
         """健康检查"""
         if deep is False:
@@ -450,7 +462,6 @@ class VectorStore:
                 "error": str(e)
             }
 
-    
     def as_retriever(self, **kwargs):
         """返回LangChain检索器接口"""
         self._ensure_initialized()

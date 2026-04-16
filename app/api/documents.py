@@ -40,8 +40,10 @@ def get_vector_store():
 async def upload_document_async(file: UploadFile = File(...), _: dict = Depends(require_admin)):
     """真正的异步上传（线程池版本）"""
     try:
+        display_filename = doc_processor.validate_filename(file.filename)
+
         # 检查文件类型
-        if not doc_processor.is_supported_file(file.filename):
+        if not doc_processor.is_supported_file(display_filename):
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
@@ -55,28 +57,31 @@ async def upload_document_async(file: UploadFile = File(...), _: dict = Depends(
                 status_code=400,
                 detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
             )
+
+        content_hash = doc_processor.compute_content_hash(file_content)
         
-        # 高效重复检查（按文件名）
-        if get_vector_store().document_exists_by_filename(file.filename):
+        # 高效重复检查（按内容哈希）
+        if get_vector_store().document_exists_by_content_hash(content_hash):
             raise HTTPException(
                 status_code=409,
-                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+                detail="Document with identical content already exists."
             )
+
         # 保存到临时目录
-        #file_content = await file.read()
-        temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
+        temp_path = doc_processor.save_to_temp_file(file_content, display_filename)
         
         # 生成文档ID
         document_id = str(uuid.uuid4())
         
         # 初始化作业状态
-        job_status.init_job(document_id, file.filename, {
+        job_status.init_job(document_id, display_filename, {
             "processing_mode": "async_thread",
-            "stage": "queued"
+            "stage": "queued",
+            "content_hash": content_hash,
         })
          
         # 提交到线程池（立即返回）
-        async_processor.submit_task(document_id, temp_path, file.filename)
+        async_processor.submit_task(document_id, temp_path, display_filename, content_hash)
         
         return {
             "success": True,
@@ -84,12 +89,15 @@ async def upload_document_async(file: UploadFile = File(...), _: dict = Depends(
             "document_id": document_id,
             "status": "queued",
             "processing_mode": "async",
-            "filename": file.filename
+            "filename": display_filename
         }
-        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Upload failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Upload failed")
 
 
 @router.post("/upload")
@@ -101,8 +109,10 @@ async def upload_document(
 ):
     """上传文档（兼容原有接口）"""
     try:
+        display_filename = doc_processor.validate_filename(file.filename)
+
         # 检查文件类型
-        if not doc_processor.is_supported_file(file.filename):
+        if not doc_processor.is_supported_file(display_filename):
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported file type. Supported types: {list(doc_processor.supported_extensions)}"
@@ -116,29 +126,25 @@ async def upload_document(
                 status_code=400,
                 detail=f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
             )
+
+        content_hash = doc_processor.compute_content_hash(file_content)
         
-        # 高效重复检查（按文件名）
-        if get_vector_store().document_exists_by_filename(file.filename):
+        # 高效重复检查（按内容哈希）
+        if get_vector_store().document_exists_by_content_hash(content_hash):
             raise HTTPException(
                 status_code=409,
-                detail=f"Document '{file.filename}' already exists. Please delete the existing document first or rename your file."
+                detail="Document with identical content already exists."
             )
-        
-        # 保存文件（同步路径使用最终目录，兼容现有测试与逻辑）
-        file_path = doc_processor.save_uploaded_file(file_content, file.filename)
-        
-        # 获取文件基本信息
-        file_info = doc_processor.get_document_info(file_path)
-        
-        if not file_info:
-            raise HTTPException(status_code=500, detail="Failed to get file information")
+
+        initial_document_id = str(uuid.uuid4())
+        file_ext = os.path.splitext(display_filename)[1].lower()
         
         # 创建文档记录
         doc_record = Document(
-            id=os.path.basename(file_path).split('_')[0],
-            filename=file.filename,
-            file_type=file_info['file_type'],
-            file_size=file_info['file_size'],
+            id=initial_document_id,
+            filename=display_filename,
+            file_type=file_ext,
+            file_size=len(file_content),
             upload_time=datetime.now(),
             status="processing",
             chunk_count=None
@@ -147,22 +153,23 @@ async def upload_document(
         if async_processing:
             # 异步处理：立即返回，后台处理
             # 异步处理使用临时目录写入，后台搬迁
-            temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
+            temp_path = doc_processor.save_to_temp_file(file_content, display_filename)
             # 生成document_id并初始化作业
-            import uuid
             async_document_id = str(uuid.uuid4())
             try:
-                job_status.init_job(async_document_id, file.filename, {
+                job_status.init_job(async_document_id, display_filename, {
                     "processing_mode": "async",
-                    "stage": "uploaded"
+                    "stage": "uploaded",
+                    "content_hash": content_hash,
                 })
             except Exception:
                 pass
             background_tasks.add_task(
                 process_document_background,
                 temp_path,
-                file.filename,
-                async_document_id
+                display_filename,
+                async_document_id,
+                content_hash,
             )
             
             return {
@@ -173,16 +180,26 @@ async def upload_document(
                 "processing_mode": "async"
             }
         else:
+            # 同步处理：先写入最终目录，再执行解析与向量化
+            file_path = doc_processor.save_uploaded_file(file_content, display_filename)
+            file_info = doc_processor.get_document_info(file_path)
+            if not file_info:
+                raise HTTPException(status_code=500, detail="Failed to get file information")
+
+            doc_record.file_type = file_info['file_type']
+            doc_record.file_size = file_info['file_size']
+
             # 同步处理：等待完成后返回
-            logger.info(f"Processing document: {file.filename}")
-            result = doc_processor.process_document(file_path, file.filename)
+            logger.info(f"Processing document: {display_filename}")
+            result = doc_processor.process_document(file_path, display_filename, content_hash=content_hash)
             
             if result['status'] == 'completed':
                 # 添加到向量存储
                 get_vector_store().add_documents(result['chunks'])
                 doc_record.status = "completed"
                 doc_record.chunk_count = result['chunk_count']
-                logger.info(f"Document {file.filename} processed successfully")
+                doc_record.id = result['document_id']
+                logger.info(f"Document {display_filename} processed successfully")
                 
                 return {
                     "success": True,
@@ -203,14 +220,21 @@ async def upload_document(
                     "processing_mode": "sync"
                 }
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error uploading document: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Upload failed")
 
 
-async def process_document_background(file_path: str, filename: str, document_id: Optional[str] = None):
+async def process_document_background(
+    file_path: str,
+    filename: str,
+    document_id: Optional[str] = None,
+    content_hash: Optional[str] = None,
+):
     """后台处理文档"""
     try:
         logger.info(f"Processing document: {filename} (ID: {document_id})")
@@ -241,7 +265,7 @@ async def process_document_background(file_path: str, filename: str, document_id
                 job_status.mark_processing(document_id, progress=15, message="Processing document")
         except Exception:
             pass
-        result = doc_processor.process_document(real_path, filename)
+        result = doc_processor.process_document(real_path, filename, content_hash=content_hash)
         
         if result['status'] == 'completed':
             # 添加document_id到chunks元数据
@@ -440,42 +464,73 @@ async def batch_upload_documents(
             )
         
         results = []
+        seen_hashes = set()
         
         for file in files:
             try:
+                display_filename = doc_processor.validate_filename(file.filename)
+
                 # 检查文件类型
-                if not doc_processor.is_supported_file(file.filename):
+                if not doc_processor.is_supported_file(display_filename):
                     results.append({
-                        "filename": file.filename,
+                        "filename": display_filename,
                         "success": False,
                         "error": f"Unsupported file type"
                     })
                     continue
-                
-                # 高效重复检查（按文件名）
-                if get_vector_store().document_exists_by_filename(file.filename):
+
+                file_content = await file.read()
+                max_size_bytes = settings.max_file_size_mb * 1024 * 1024
+                if len(file_content) > max_size_bytes:
                     results.append({
-                        "filename": file.filename,
+                        "filename": display_filename,
                         "success": False,
-                        "error": f"Document already exists"
+                        "error": f"File size too large. Maximum size is {settings.max_file_size_mb}MB."
+                    })
+                    continue
+
+                content_hash = doc_processor.compute_content_hash(file_content)
+
+                if content_hash in seen_hashes:
+                    results.append({
+                        "filename": display_filename,
+                        "success": False,
+                        "error": "Document with identical content already exists"
+                    })
+                    continue
+                
+                # 高效重复检查（按内容哈希）
+                if get_vector_store().document_exists_by_content_hash(content_hash):
+                    results.append({
+                        "filename": display_filename,
+                        "success": False,
+                        "error": "Document with identical content already exists"
                     })
                     continue
                 
                 # 保存到临时目录，后台搬迁再处理
-                file_content = await file.read()
-                temp_path = doc_processor.save_to_temp_file(file_content, file.filename)
+                temp_path = doc_processor.save_to_temp_file(file_content, display_filename)
+                seen_hashes.add(content_hash)
                 
                 # 后台处理
                 background_tasks.add_task(
                     process_document_background,
                     temp_path,
-                    file.filename
+                    display_filename,
+                    None,
+                    content_hash,
                 )
                 
                 results.append({
-                    "filename": file.filename,
+                    "filename": display_filename,
                     "success": True,
                     "message": "Upload successful, processing started"
+                })
+            except ValueError as e:
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "error": str(e)
                 })
                 
             except Exception as e:

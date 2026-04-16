@@ -40,12 +40,22 @@ class TestDocumentProcessor:
                 
                 # 验证文件是否保存成功
                 assert os.path.exists(file_path)
-                assert filename in os.path.basename(file_path)
+                assert os.path.basename(file_path) != filename
+                assert os.path.splitext(os.path.basename(file_path))[1] == ".txt"
                 
                 # 验证文件内容
                 with open(file_path, 'rb') as f:
                     saved_content = f.read()
                 assert saved_content == content
+    
+    def test_save_uploaded_file_rejects_dangerous_filename(self):
+        """测试危险文件名会被拒绝"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch('app.core.document_processor.settings') as mock_settings:
+                mock_settings.upload_dir = temp_dir
+
+                with pytest.raises(ValueError):
+                    self.processor.save_uploaded_file(b"x", "../../evil.txt")
     
     def test_get_document_info(self):
         """测试获取文档信息"""

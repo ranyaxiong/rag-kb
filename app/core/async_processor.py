@@ -26,7 +26,13 @@ class AsyncDocumentProcessor:
         # 启动清理线程
         self._start_cleanup_thread()
     
-    def submit_task(self, document_id: str, file_path: str, filename: str) -> str:
+    def submit_task(
+        self,
+        document_id: str,
+        file_path: str,
+        filename: str,
+        content_hash: Optional[str] = None,
+    ) -> str:
         """提交处理任务"""
         # 创建取消标志
         cancel_event = threading.Event()
@@ -36,13 +42,14 @@ class AsyncDocumentProcessor:
 
         future = self.executor.submit(
             self._process_document_safe,
-            document_id, file_path, filename
+            document_id, file_path, filename, content_hash
         )
 
         with self._lock:
             self.tasks[document_id] = {
                 "future": future,
                 "filename": filename,
+                "content_hash": content_hash,
                 "submitted_at": time.time(),
                 "status": "queued",
                 "file_path": file_path  # 保存文件路径用于清理
@@ -199,7 +206,13 @@ class AsyncDocumentProcessor:
                 "submitted_at": task_info["submitted_at"]
             }
     
-    def _process_document_safe(self, document_id: str, file_path: str, filename: str) -> Dict[str, Any]:
+    def _process_document_safe(
+        self,
+        document_id: str,
+        file_path: str,
+        filename: str,
+        content_hash: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """安全的文档处理包装器（支持取消）"""
         try:
             from app.core.document_processor import doc_processor
@@ -256,7 +269,8 @@ class AsyncDocumentProcessor:
             result = doc_processor.process_document(
                 real_path, 
                 filename,
-                cancel_checker=lambda: self._check_cancelled(document_id)
+                cancel_checker=lambda: self._check_cancelled(document_id),
+                content_hash=content_hash,
             )
 
             # 检查点 4: 文档处理后检查
