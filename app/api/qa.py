@@ -234,37 +234,6 @@ async def ask_question(payload: QuestionRequest, request: Request):
         raise HTTPException(status_code=500, detail=f"Question processing failed: {str(e)}")
 
 
-@router.get("/verify-key")
-async def verify_key(request: Request):
-    """验证 LLM API Key 是否有效（仅做一次最小化调用）"""
-    try:
-        overrides = _extract_overrides_from_headers(request)
-        from app.core.config import settings
-        api_key = overrides.get("api_key") or settings.get_api_key()
-        if not api_key:
-            raise HTTPException(status_code=400, detail="No API key provided. 请在请求头或服务端配置中提供 API Key")
-        # 构造模型配置
-        model_cfg = settings.get_model_config(overrides)
-        # 构建 LLM 客户端并做一次轻量调用
-        llm_kwargs = {
-            "model": model_cfg["chat_model"],
-            "api_key": api_key,
-            "temperature": 0.0,
-            "max_tokens": 4,
-        }
-        if model_cfg.get("api_base_url") and model_cfg["api_base_url"] != "https://api.openai.com/v1":
-            llm_kwargs["base_url"] = model_cfg["api_base_url"]
-            llm_kwargs["organization"] = ""
-        llm = ChatOpenAI(**llm_kwargs)
-        _ = llm.predict("ping")
-        return {"success": True, "provider": model_cfg["provider"], "model": model_cfg["chat_model"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Verify key failed: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Verify key failed: {str(e)}")
-
-
 @router.post("/search")
 async def search_documents(payload: QuestionRequest, request: Request):
     """文档检索接口（不生成答案）"""
