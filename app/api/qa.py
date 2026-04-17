@@ -346,7 +346,9 @@ async def submit_feedback(
 
 
 @router.get("/health")
-async def qa_health_check(deep: Optional[bool] = None, with_qa: Optional[bool] = None):
+async def qa_health_check(deep: Optional[bool] = None, with_qa: Optional[bool] = None,
+    _: dict = Depends(require_admin)
+):
     """问答系统健康检查"""
     try:
         health_info = get_qa_engine().health_check(deep=deep, with_qa=with_qa)
@@ -362,7 +364,7 @@ async def qa_health_check(deep: Optional[bool] = None, with_qa: Optional[bool] =
 
 
 @router.get("/stats")
-async def get_qa_stats():
+async def get_qa_stats(_: dict = Depends(require_admin)):
     """获取问答系统统计信息"""
     try:
         from app.core.config import settings
@@ -393,7 +395,7 @@ async def get_qa_stats():
 
 
 @router.delete("/cache")
-async def clear_cache():
+async def clear_cache(_: dict = Depends(require_admin)):
     """清空问答缓存"""
     try:
         from app.core.cache_manager import cache_manager
@@ -411,7 +413,7 @@ async def clear_cache():
 
 
 @router.delete("/cache/all")
-async def clear_all_cache():
+async def clear_all_cache(_: dict = Depends(require_admin)):
     """清空所有缓存"""
     try:
         from app.core.cache_manager import cache_manager

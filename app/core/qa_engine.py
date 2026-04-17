@@ -362,15 +362,19 @@ class QAEngine:
             vector_health = self.vector_store.health_check(deep=deep)
             llm_status, qa_status = "skipped", "skipped"
             collection_info = self.vector_store.get_collection_info()
-            if deep is not False:
+            if deep is True:
                 if self.llm:
                     self.llm.predict("Hello")
                     llm_status = "connected"
                 else:
                     llm_status = "not_initialized"
-                if (with_qa or (with_qa is None and collection_info.get("document_count", 0) > 0)):
-                    try: qa_status = "working" if self.ask("测试问题", 1).answer else "failed"
-                    except: qa_status = "failed"
+
+                if with_qa is True:
+                    try: 
+                        qa_status = "working" if self.ask("测试问题", 1).answer else "failed"
+                    except Exception as e: 
+                        logger.error(f"QA chain health check failed: {str(e)}")
+                        qa_status = "failed"
             
             overall  = "healthy" if (vector_health.get("status")== "healthy" 
                                      and llm_status in ("connected", "skipped") 
