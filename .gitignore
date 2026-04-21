@@ -32,7 +32,7 @@ data/quotas/*
 .idea/
 *.swp
 *.swo
-
+.windsurf/
 # OS
 .DS_Store
 Thumbs.db
