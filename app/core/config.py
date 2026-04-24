@@ -82,7 +82,10 @@ class Settings(BaseSettings):
     # 回退/过滤相关
     relevance_fallback_threshold: float = 0.5  # 更严格的相似度阈值（距离<=该值视为强相关），无强相关则回退到全库
     relevance_fallback_margin: float = 0.1     # 当全库最佳结果优于限定范围最佳结果超过该边际时触发回退
-    
+    # 输入限制设置
+    max_question_length: int = 2000
+    min_question_length: int = 1
+    max_source_limit: int = 10
     # 成本优化配置
     enable_embedding_cache: bool = True
     enable_qa_cache: bool = True

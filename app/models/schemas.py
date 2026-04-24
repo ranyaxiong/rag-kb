@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class DocumentBase(BaseModel):
@@ -38,9 +38,18 @@ class DocumentChunk(BaseModel):
 
 class QuestionRequest(BaseModel):
     """问答请求模型"""
-    question: str
-    max_sources: Optional[int] = 3
+    question: str = Field(..., min_length=1, max_length=2000, description="用户提问内容")
+    max_sources: Optional[int] = Field(default=3,ge=1, le=10, description="返回的来源文档数量")
     document_id: Optional[str] = None
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, v):
+        if not v or not v.strip():
+            raise ValueError("question can not be empty")
+        if  len(v) > 2000:
+            raise ValueError("question length can not exceed 2000 characters")
+        return v.strip()
 
 
 class SourceDocument(BaseModel):

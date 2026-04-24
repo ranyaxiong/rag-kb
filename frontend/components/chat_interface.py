@@ -7,6 +7,10 @@ import time
 from typing import Optional
 
 
+# 与后端 schemas.py / config.py 保持一致
+MAX_QUESTION_LENGTH = 2000
+
+
 class ChatInterface:
     """聊天界面组件类"""
     
@@ -167,7 +171,8 @@ class ChatInterface:
         # 问题输入
         user_question = st.chat_input(
             "请输入您的问题...",
-            disabled=st.session_state.is_processing
+            disabled=st.session_state.is_processing,
+            max_chars=MAX_QUESTION_LENGTH
         )
         
         if user_question:
@@ -193,6 +198,14 @@ class ChatInterface:
     
     def _process_question(self, question: str):
         """处理用户问题"""
+        
+        # 前端长度校验，与后端保持一致
+        if len(question) > MAX_QUESTION_LENGTH:
+            st.warning(
+                f"⚠️ 问题长度超出限制（{len(question)}/{MAX_QUESTION_LENGTH} 字符），"
+                f"请缩短后重试。"
+            )
+            return
         
         # 添加用户消息
         st.session_state.messages.append({

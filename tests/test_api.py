@@ -318,6 +318,18 @@ class TestQAAPI:
         assert response.status_code == 400
         assert "Question cannot be empty" in response.json()["detail"]
 
+    def test_ask_question_too_long(self):
+        """测试问题过长"""
+        long_question = "a" * 2001
+        request_data = {"question": long_question}
+        response = client.post("/api/qa/ask", json=request_data)
+        assert response.status_code in [400, 422]
+        data = response.json()
+        if response.status_code == 400:
+            assert "Question length out of range" in data["detail"]
+        else:
+            assert "question length can not exceed 2000 characters" in data["detail"][0]["msg"]
+
     @patch('app.api.qa.qa_engine')
     def test_search_documents(self, mock_qa_engine):
         """测试文档检索"""
