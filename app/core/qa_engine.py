@@ -128,7 +128,7 @@ class QAEngine:
             scoped_k = settings.retrieval_k_scoped
             global_k = settings.retrieval_k_global
             global_fetch_k = settings.retrieval_fetch_k_global
-            mmr_lambda = settings.retrieval_mmr_lambda_mult
+            mmr_lambda_mult = settings.retrieval_mmr_lambda_mult
             
             # 首先获取相关文档用于生成上下文hash；
             # 若限定文档下只有“低相关”（距离大于阈值）或为零，则回退到全库

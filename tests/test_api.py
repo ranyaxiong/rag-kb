@@ -8,9 +8,12 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import jwt
+from langchain_core.documents import Document
 
 from app.main import app
 from app.core.config import settings
+from app.core.qa_engine import QAEngine
+from app.models.schemas import SourceDocument
 
 
 client = TestClient(app)
@@ -454,6 +457,137 @@ class TestQAAPI:
         response = client.post("/api/qa/feedback", params=feedback_data)
         assert response.status_code == 400
         assert "Rating must be between 1 and 5" in response.json()["detail"]
+
+
+class TestQAEngineRetrievalDecoupling:
+    @staticmethod
+    def _make_docs(count: int, document_id: str = "doc-1") -> list[Document]:
+        return [
+            Document(
+                page_content=f"相关内容{i}",
+                metadata={
+                    "filename": f"test-{i}.txt",
+                    "document_id": document_id,
+                    "page": i,
+                },
+            )
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _make_cached_sources(count: int) -> list[dict]:
+        return [
+            SourceDocument(
+                document_name=f"test-{i}.txt",
+                content=f"相关内容{i}",
+                similarity_score=1.0,
+                page_number=i,
+            ).model_dump()
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _build_engine(vector_store: MagicMock, source_docs: list[Document]) -> QAEngine:
+        with patch.object(QAEngine, "_initialize_llm", return_value=None), patch.object(QAEngine, "_build_qa_chain", return_value=MagicMock()):
+            engine = QAEngine(vector_store)
+        engine._effective_model_config = {
+            "api_base_url": "https://api.openai.com/v1",
+            "provider": "openai",
+            "chat_model": "test-model",
+        }
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = {
+            "result": "测试答案",
+            "source_documents": source_docs,
+        }
+        engine._build_qa_chain = MagicMock(return_value=mock_chain)
+        return engine
+
+    def test_qa_engine_global_mmr_params_ignore_user_max_sources(self):
+        docs = self._make_docs(4, document_id="doc-global")
+        vector_store = MagicMock()
+        vector_store.similarity_search.return_value = docs
+        vector_store.as_retriever.return_value = MagicMock()
+        engine = self._build_engine(vector_store, docs)
+
+        with patch("app.core.qa_engine.cache_manager.get_context_hash", return_value="ctx"), patch("app.core.qa_engine.cache_manager.get_qa_cache", return_value=None), patch("app.core.qa_engine.cache_manager.set_qa_cache"):
+            response_one = engine.ask("测试问题", max_sources=1)
+            first_call = vector_store.as_retriever.call_args
+            vector_store.as_retriever.reset_mock()
+            response_two = engine.ask("测试问题", max_sources=5)
+            second_call = vector_store.as_retriever.call_args
+
+        assert len(response_one.sources) == 1
+        assert len(response_two.sources) == 4
+        assert first_call == second_call
+        assert first_call.kwargs == {
+            "search_type": "mmr",
+            "search_kwargs": {
+                "k": settings.retrieval_k_global,
+                "fetch_k": settings.retrieval_fetch_k_global,
+                "lambda_mult": settings.retrieval_mmr_lambda_mult,
+            },
+        }
+
+    def test_qa_engine_scoped_params_ignore_user_max_sources(self):
+        restricted_docs = self._make_docs(3, document_id="doc-1")
+        global_docs = self._make_docs(2, document_id="doc-2")
+        restricted_scored = [(restricted_docs[0], 0.1), (restricted_docs[1], 0.2)]
+        global_scored = [(global_docs[0], 0.35), (global_docs[1], 0.4)]
+        vector_store = MagicMock()
+        vector_store.similarity_search_with_score.side_effect = lambda **kwargs: restricted_scored if kwargs.get("filter_dict") else global_scored
+        vector_store.as_retriever.return_value = MagicMock()
+        engine = self._build_engine(vector_store, restricted_docs)
+
+        with patch("app.core.qa_engine.cache_manager.get_context_hash", return_value="ctx"), patch("app.core.qa_engine.cache_manager.get_qa_cache", return_value=None), patch("app.core.qa_engine.cache_manager.set_qa_cache"):
+            response_one = engine.ask("测试问题", max_sources=1, document_id="doc-1")
+            first_call = vector_store.as_retriever.call_args
+            vector_store.as_retriever.reset_mock()
+            response_two = engine.ask("测试问题", max_sources=5, document_id="doc-1")
+            second_call = vector_store.as_retriever.call_args
+
+        assert len(response_one.sources) == 1
+        assert len(response_two.sources) == 3
+        assert first_call == second_call
+        assert first_call.kwargs == {
+            "search_kwargs": {
+                "k": settings.retrieval_k_scoped,
+                "filter": {"document_id": "doc-1"},
+            }
+        }
+        assert vector_store.similarity_search_with_score.call_count == 4
+        for call in vector_store.similarity_search_with_score.call_args_list:
+            assert call.kwargs["k"] == settings.retrieval_precheck_k
+
+    def test_qa_engine_cache_miss_truncates_visible_sources_only(self):
+        docs = self._make_docs(4, document_id="doc-global")
+        vector_store = MagicMock()
+        vector_store.similarity_search.return_value = docs
+        vector_store.as_retriever.return_value = MagicMock()
+        engine = self._build_engine(vector_store, docs)
+
+        with patch("app.core.qa_engine.cache_manager.get_context_hash", return_value="ctx"), patch("app.core.qa_engine.cache_manager.get_qa_cache", return_value=None), patch("app.core.qa_engine.cache_manager.set_qa_cache") as mock_set_cache:
+            response = engine.ask("测试问题", max_sources=2)
+
+        cached_sources = mock_set_cache.call_args.args[3]
+        assert response.from_cache is False
+        assert len(response.sources) == 2
+        assert len(cached_sources) == 4
+
+    def test_qa_engine_cache_hit_truncates_visible_sources(self):
+        docs = self._make_docs(4, document_id="doc-global")
+        cached_sources = self._make_cached_sources(4)
+        vector_store = MagicMock()
+        vector_store.similarity_search.return_value = docs
+        engine = self._build_engine(vector_store, docs)
+
+        with patch("app.core.qa_engine.cache_manager.get_context_hash", return_value="ctx"), patch("app.core.qa_engine.cache_manager.get_qa_cache", return_value={"answer": "缓存答案", "sources": cached_sources}), patch("app.core.qa_engine.cache_manager.set_qa_cache") as mock_set_cache:
+            response = engine.ask("测试问题", max_sources=2)
+
+        assert response.from_cache is True
+        assert len(response.sources) == 2
+        vector_store.as_retriever.assert_not_called()
+        mock_set_cache.assert_not_called()
 
 
 class TestAPIIntegration:
