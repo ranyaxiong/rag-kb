@@ -4,6 +4,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
+from app.core.config import settings
 
 
 class DocumentBase(BaseModel):
@@ -39,7 +40,7 @@ class DocumentChunk(BaseModel):
 class QuestionRequest(BaseModel):
     """问答请求模型"""
     question: str = Field(..., min_length=1, max_length=2000, description="用户提问内容")
-    max_sources: Optional[int] = Field(default=3,ge=1, le=10, description="返回的来源文档数量")
+    max_sources: Optional[int] = Field(default=settings.max_sources,ge=settings.min_source_limit, le=settings.max_source_limit, description="返回的来源文档数量")
     document_id: Optional[str] = None
 
     @field_validator("question")

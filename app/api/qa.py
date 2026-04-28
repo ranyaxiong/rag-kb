@@ -85,9 +85,7 @@ async def ask_question(payload: QuestionRequest, request: Request):
         from app.core.config import settings
         if len(payload.question) < settings.min_question_length or len(payload.question) > settings.max_question_length:
             raise HTTPException(status_code=400, detail="Question length out of range")
-        # 验证 max_sources 参数
-        if payload.max_sources and payload.max_sources > settings.max_source_limit:
-            raise HTTPException(status_code=400, detail="Max sources out of range")
+        
         # 检查是否有文档数据
         collection_info = get_vector_store().get_collection_info()
         if collection_info.get("document_count", 0) == 0:

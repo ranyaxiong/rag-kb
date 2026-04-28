@@ -77,15 +77,24 @@ class Settings(BaseSettings):
     # RAG配置
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    min_source_limit: int = 1
+    max_source_limit: int = 5
     max_sources: int = 3
+
+    retrieval_precheck_k: int = 6
+    retrieval_k_scoped: int = 3
+    retrieval_k_global: int = 6
+    retrieval_fetch_k_global: int = 24
+    retrieval_mmr_lambda_mult: float = 0.5
+
     similarity_threshold: float = 1.5  # ChromaDB距离分数,值越小越相似,1.5以下通常为相关
+        
     # 回退/过滤相关
     relevance_fallback_threshold: float = 0.5  # 更严格的相似度阈值（距离<=该值视为强相关），无强相关则回退到全库
     relevance_fallback_margin: float = 0.1     # 当全库最佳结果优于限定范围最佳结果超过该边际时触发回退
     # 输入限制设置
     max_question_length: int = 2000
     min_question_length: int = 1
-    max_source_limit: int = 10
     # 成本优化配置
     enable_embedding_cache: bool = True
     enable_qa_cache: bool = True

@@ -7,8 +7,9 @@ import time
 from typing import Optional
 
 
-# 与后端 schemas.py / config.py 保持一致
 MAX_QUESTION_LENGTH = 2000
+DEFAULT_MAX_SOURCES = 3
+MAX_SOURCES_LIMIT = 5
 
 
 class ChatInterface:
@@ -169,6 +170,7 @@ class ChatInterface:
                 pass
 
         # 问题输入
+        st.caption(f"问题长度上限：{MAX_QUESTION_LENGTH} 字符")
         user_question = st.chat_input(
             "请输入您的问题...",
             disabled=st.session_state.is_processing,
@@ -183,8 +185,8 @@ class ChatInterface:
             max_sources = st.slider(
                 "最大来源文档数量",
                 min_value=1,
-                max_value=10,
-                value=3,
+                max_value=MAX_SOURCES_LIMIT,
+                value=DEFAULT_MAX_SOURCES,
                 help="控制回答时参考的文档数量"
             )
             st.session_state.max_sources = max_sources
@@ -196,23 +198,30 @@ class ChatInterface:
             )
             st.session_state.reset_scope_on_clear = reset_scope
     
+    def _validate_question(self, question: str) -> Optional[str]:
+        """验证问题长度"""
+        normalized_question = question.strip()
+        if not normalized:
+            st.warning("⚠️ 请输入有效的问题")
+            return None
+        if len(normalized_question) > MAX_QUESTION_LENGTH:
+            st.warning(f"⚠️ 问题长度不能超过{MAX_QUESTION_LENGTH}字符，请精简后重试")
+            return None
+        return normalized_question
+    
     def _process_question(self, question: str):
         """处理用户问题"""
         
-        # 前端长度校验，与后端保持一致
-        if len(question) > MAX_QUESTION_LENGTH:
-            st.warning(
-                f"⚠️ 问题长度超出限制（{len(question)}/{MAX_QUESTION_LENGTH} 字符），"
-                f"请缩短后重试。"
-            )
+        question = self._validate_question(question)
+        if  question is None:
             return
-        
-        # 添加用户消息
+
         st.session_state.messages.append({
             "role": "user",
             "content": question
         })
         
+                
         # 显示用户消息
         with st.chat_message("user"):
             st.write(question)
@@ -225,7 +234,7 @@ class ChatInterface:
             with st.spinner("正在思考中..."):
                 try:
                     # 调用问答API
-                    max_sources = getattr(st.session_state, 'max_sources', 3)
+                    max_sources = getattr(st.session_state, 'max_sources', DEFAULT_MAX_SOURCES)
                     
                     response = requests.post(
                         f"{self.backend_url}/api/qa/ask",

@@ -123,8 +123,12 @@ class QAEngine:
             if not question.strip():
                 raise ValueError("Question cannot be empty")
             
-            # 使用指定的源文档数量或默认值
-            k = max_sources or settings.max_sources
+            user_source_limit = max_sources or settings.max_sources
+            precheck_k = settings.retrieval_precheck_k
+            scoped_k = settings.retrieval_k_scoped
+            global_k = settings.retrieval_k_global
+            global_fetch_k = settings.retrieval_fetch_k_global
+            mmr_lambda = settings.retrieval_mmr_lambda_mult
             
             # 首先获取相关文档用于生成上下文hash；
             # 若限定文档下只有“低相关”（距离大于阈值）或为零，则回退到全库
@@ -136,7 +140,7 @@ class QAEngine:
                 try:
                     restricted_scored = self.vector_store.similarity_search_with_score(
                         query=question,
-                        k=max(k, settings.max_sources * 2),
+                        k=precheck_k,
                         filter_dict={"document_id": document_id},
                         threshold=settings.relevance_fallback_threshold,
                     )
@@ -147,7 +151,7 @@ class QAEngine:
                 try:
                     global_scored = self.vector_store.similarity_search_with_score(
                         query=question,
-                        k=max(k, settings.max_sources * 2),
+                        k=precheck_k,
                         filter_dict=None,
                         threshold=settings.relevance_fallback_threshold,
                     )
@@ -200,17 +204,17 @@ class QAEngine:
                     used_document_id = None
                     # 使用全库阈值过滤后的文档作为上下文（若无则退回无过滤的简单检索）
                     if len(global_scored) > 0:
-                        relevant_docs = [doc for doc, _ in global_scored][:max(k, settings.max_sources)]
+                        relevant_docs = [doc for doc, _ in global_scored][:global_k]
                         fallback_note = "提示：在您选定的文档中未检索到更相关的内容，已自动在全库中扩大检索范围。"
                     else:
-                        relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources * 2), None)
+                        relevant_docs = self.get_relevant_documents(question, global_k, None)
                         fallback_note = "提示：在您选定的文档以及全库中均未检索到相关内容。"
                 else:
                     # 使用限定范围内阈值过滤后的文档作为上下文
-                    relevant_docs = [doc for doc, _ in restricted_scored][:k]
+                    relevant_docs = [doc for doc, _ in restricted_scored][:scoped_k]
             else:
                 # 全库预检（保持原行为即可）
-                relevant_docs = self.get_relevant_documents(question, max(k, settings.max_sources), None)
+                relevant_docs = self.get_relevant_documents(question, global_k, None)
             
             # 基于最终采用的上下文计算hash
             context_hash = cache_manager.get_context_hash(relevant_docs)
@@ -225,27 +229,36 @@ class QAEngine:
             if cached_result:
                 processing_time = time.time() - start_time
                 logger.info(f"Question answered from cache in {processing_time:.2f}s")
-                
+                cached_sources = [SourceDocument(**src) for src in cached_result["sources"]]
+                visible_sources = cached_sources[:user_source_limit]
                 return QuestionResponse(
                     answer=cached_result["answer"],
-                    sources=[SourceDocument(**src) for src in cached_result["sources"]],
+                    sources=visible_sources,
                     processing_time=round(processing_time, 2),
                     from_cache=True
                 )
             
             # 缓存未命中，执行RAG查询（为本次请求构建 retriever，防止跨文档混入）
-            k_effective = k if used_document_id else max(k, settings.max_sources * 2)
+            k_effective = scoped_k if used_document_id else global_k
             search_kwargs: Dict[str, Any] = {"k": k_effective}
             if used_document_id:
                 search_kwargs["filter"] = {"document_id": used_document_id}
             # 构建 retriever：全库检索使用 MMR 增强多样性，降低单文档“淹没”其他文档的情况
             if used_document_id:
                 retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
-                logger.info(f"QAEngine.ask using search_kwargs={search_kwargs}")
+                logger.info(f"QAEngine.ask retrieval_mode=scoped user_source_limit={user_source_limit}"
+                f"precheck_k={precheck_k} k_effective={k_effective} document_id={used_document_id}"
+                )
             else:
-                mmr_kwargs = {**search_kwargs, "fetch_k": max(20, k_effective * 4), "lambda_mult": 0.5}
+                mmr_kwargs = {
+                    **search_kwargs,
+                    "fetch_k": global_fetch_k,
+                    "lambda_mult": mmr_lambda_mult,
+
+                }
                 retriever = self.vector_store.as_retriever(search_type="mmr", search_kwargs=mmr_kwargs)
-                logger.info(f"QAEngine.ask using MMR, search_kwargs={mmr_kwargs}")
+                logger.info(f"QAEngine.ask retrieval_mode=global user_source_limit={user_source_limit}"
+                f"precheck_k={precheck_k} k_effective={k_effective} fetch_k={global_fetch_k} lambda_mult={mmr_lambda_mult}")
             
             qa_chain = self._build_qa_chain(retriever=retriever)
             result = qa_chain.invoke({"query": question})
@@ -267,15 +280,15 @@ class QAEngine:
             sources = self._process_source_documents(source_docs)
             
             # 缓存结果
-            sources_dict = [src.dict() for src in sources]
+            sources_dict = [src.model_dump() for src in sources]
             cache_manager.set_qa_cache(question, context_hash, answer, sources_dict, model_name)
             
             # 计算处理时间
             processing_time = time.time() - start_time
-            
+            visible_sources = sources[:user_source_limit]
             response = QuestionResponse(
                 answer=answer,
-                sources=sources,
+                sources=visible_sources,
                 processing_time=round(processing_time, 2),
                 from_cache=False
             )

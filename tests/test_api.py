@@ -330,6 +330,55 @@ class TestQAAPI:
         else:
             assert "question length can not exceed 2000 characters" in data["detail"][0]["msg"]
 
+    def test_ask_question_max_sources_too_small(self):
+        request_data = {"question": "测试问题", "max_sources": 0}
+        response = client.post("/api/qa/ask", json=request_data)
+
+        assert response.status_code == 422
+        data = response.json()
+        assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
+    
+    def test_ask_question_max_sources_too_large(self):
+        request_data = {"question": "测试问题", "max_sources": 6}
+        response = client.post("/api/qa/ask", json=request_data)
+
+        assert response.status_code == 422
+        data = response.json()
+        assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
+
+    def test_search_documents_max_sources_too_large(self):
+        request_data = {"question": "测试查询", "max_sources": 6}
+        response = client.post("/api/qa/search", json=request_data)
+
+        assert response.status_code == 422
+        data = response.json()
+        assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
+    
+    @patch('app.api.qa.vector_store')
+    @patch('app.api.qa.qa_engine')
+    def test_ask_question_default_max_sources(self, mock_qa_engine, mock_vector_store):
+        mock_vector_store.get_collection_info.return_value = {"document_count": 1}
+
+        from app.models.schemas import QuestionResponse
+        mock_qa_engine.ask.return_value = QuestionResponse(
+            answer="默认值测试",
+            sources=[],
+            processing_time=0.1
+        )
+
+        from app.core import config as config_module
+        config_module.settings.enable_quota_limit = False
+
+        response = client.post("/api/qa/ask", json={"question": "测试问题"})
+        assert response.status_code == 200
+    def test_search_documents_max_sources_too_small(self):
+        request_data = {"question": "测试查询", "max_sources": 0}
+        response = client.post("/api/qa/search", json=request_data)
+
+        assert response.status_code == 422
+        data = response.json()
+        assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
+    
     @patch('app.api.qa.qa_engine')
     def test_search_documents(self, mock_qa_engine):
         """测试文档检索"""
