@@ -37,7 +37,7 @@ class TestCancelFunctionality:
         processor = AsyncDocumentProcessor(max_workers=1)
         
         # 提交一个任务
-        document_id = "test-doc-1"
+        job_id = "test-job-1"
         file_path = "/tmp/test.pdf"
         filename = "test.pdf"
         
@@ -48,10 +48,10 @@ class TestCancelFunctionality:
             mock_future.done.return_value = False
             mock_submit.return_value = mock_future
             
-            processor.submit_task(document_id, file_path, filename)
+            processor.submit_task(job_id, file_path, filename)
             
             # 立即取消
-            result = processor.cancel_task(document_id)
+            result = processor.cancel_task(job_id)
             
             assert result["success"] is True
             assert result["status"] == "cancelled"
@@ -61,7 +61,7 @@ class TestCancelFunctionality:
         """测试在任务执行中取消"""
         processor = AsyncDocumentProcessor(max_workers=1)
         
-        document_id = "test-doc-2"
+        job_id = "test-job-2"
         file_path = "/tmp/test.pdf"
         filename = "test.pdf"
         
@@ -71,10 +71,10 @@ class TestCancelFunctionality:
             mock_future.done.return_value = False
             mock_submit.return_value = mock_future
             
-            processor.submit_task(document_id, file_path, filename)
+            processor.submit_task(job_id, file_path, filename)
             
             # 尝试取消
-            result = processor.cancel_task(document_id)
+            result = processor.cancel_task(job_id)
             
             assert result["success"] is True
             assert result["status"] == "cancelling"
@@ -94,7 +94,7 @@ class TestCancelFunctionality:
         """测试取消已完成的任务"""
         processor = AsyncDocumentProcessor(max_workers=1)
         
-        document_id = "test-doc-3"
+        job_id = "test-job-3"
         file_path = "/tmp/test.pdf"
         filename = "test.pdf"
         
@@ -103,10 +103,10 @@ class TestCancelFunctionality:
             mock_future.done.return_value = True  # 任务已完成
             mock_submit.return_value = mock_future
             
-            processor.submit_task(document_id, file_path, filename)
+            processor.submit_task(job_id, file_path, filename)
             
             # 尝试取消
-            result = processor.cancel_task(document_id)
+            result = processor.cancel_task(job_id)
             
             assert result["success"] is False
             assert result["status"] == "already_done"
@@ -116,20 +116,20 @@ class TestCancelFunctionality:
         """测试取消标志检查"""
         processor = AsyncDocumentProcessor(max_workers=1)
         
-        document_id = "test-doc-4"
+        job_id = "test-job-4"
         
         # 创建取消标志
         cancel_event = threading.Event()
-        processor._cancel_flags[document_id] = cancel_event
+        processor._cancel_flags[job_id] = cancel_event
         
         # 初始状态：未取消
-        assert processor._check_cancelled(document_id) is False
+        assert processor._check_cancelled(job_id) is False
         
         # 设置取消标志
         cancel_event.set()
         
         # 检查：已取消
-        assert processor._check_cancelled(document_id) is True
+        assert processor._check_cancelled(job_id) is True
     
     def test_job_status_mark_cancelled(self):
         """测试作业状态标记为已取消"""
@@ -177,6 +177,8 @@ class TestCancelIntegration:
         assert response.status_code == 200
         result = response.json()
         assert result["success"] is False
+        assert result["job_id"] == "nonexistent-id"
+        assert result["document_id"] is None
     
     @pytest.mark.asyncio
     async def test_cancel_status_endpoint(self):
@@ -195,4 +197,6 @@ class TestCancelIntegration:
         result = response.json()
         assert result["success"] is False
         assert result["cancellable"] is False
+        assert result["job_id"] == "nonexistent-id"
+        assert result["document_id"] is None
 

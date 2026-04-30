@@ -7,25 +7,25 @@ import time
 import threading
 
 
-def setup_streamlit_auto_refresh(document_id: str, client_url: str, mode: str):
+def setup_streamlit_auto_refresh(job_id: str, client_url: str, mode: str):
     """
     使用Streamlit原生方式设置自动刷新
     通过Session State + 定时检查实现
     """
     # 初始化状态
-    if f"doc_processing_{document_id}" not in st.session_state:
-        st.session_state[f"doc_processing_{document_id}"] = True
-        st.session_state[f"doc_check_count_{document_id}"] = 0
+    if f"job_processing_{job_id}" not in st.session_state:
+        st.session_state[f"job_processing_{job_id}"] = True
+        st.session_state[f"job_check_count_{job_id}"] = 0
 
     # 显示处理状态
     status_placeholder = st.empty()
 
     # 检查文档状态
-    doc_completed = check_document_status(document_id, client_url, status_placeholder)
+    doc_completed = check_document_status(job_id, client_url, status_placeholder)
 
     if doc_completed:
         # 文档处理完成
-        st.session_state[f"doc_processing_{document_id}"] = False
+        st.session_state[f"job_processing_{job_id}"] = False
 
         if mode == "处理完成立即刷新页面":
             status_placeholder.success("✅ 处理完成！正在刷新页面...")
@@ -38,25 +38,25 @@ def setup_streamlit_auto_refresh(document_id: str, client_url: str, mode: str):
         else:
             status_placeholder.success("✅ 处理完成！请点击右侧的🔄刷新按钮查看新文档")
 
-    elif st.session_state.get(f"doc_processing_{document_id}", False):
+    elif st.session_state.get(f"job_processing_{job_id}", False):
         # 仍在处理中，设置自动重新检查
-        st.session_state[f"doc_check_count_{document_id}"] += 1
+        st.session_state[f"job_check_count_{job_id}"] += 1
 
         # 每3秒检查一次，最多检查100次（5分钟）
-        if st.session_state[f"doc_check_count_{document_id}"] < 100:
+        if st.session_state[f"job_check_count_{job_id}"] < 100:
             time.sleep(3)
             st.rerun()
         else:
             status_placeholder.warning("⏰ 检查超时，请手动刷新页面查看结果")
-            st.session_state[f"doc_processing_{document_id}"] = False
+            st.session_state[f"job_processing_{job_id}"] = False
 
 
-def check_document_status(document_id: str, client_url: str, status_placeholder):
+def check_document_status(job_id: str, client_url: str, status_placeholder):
     """检查文档处理状态"""
     import requests
 
     try:
-        response = requests.get(f"{client_url}/api/documents/status/{document_id}", timeout=10)
+        response = requests.get(f"{client_url}/api/documents/status/{job_id}", timeout=10)
         if response.status_code == 200:
             result = response.json()
             status = result.get('status', 'unknown')

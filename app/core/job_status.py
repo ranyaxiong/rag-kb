@@ -1,6 +1,6 @@
 """
 作业状态持久化（最小实现）
-- 将每个异步处理任务（document_id 对应的作业）以 JSON 文件存储在 settings.job_status_dir
+- 将每个异步处理任务（job_id 对应的作业）以 JSON 文件存储在 settings.job_status_dir
 - 提供 init / update / mark_completed / mark_failed / get 等基础方法
 """
 import json
@@ -31,7 +31,7 @@ class JobStatusManager:
     def init_job(self, job_id: str, filename: str, extra: Optional[Dict[str, Any]] = None):
         data = {
             "job_id": job_id,
-            "document_id": job_id,
+            "document_id": None,
             "filename": filename,
             "status": "processing",
             "progress": 0,
@@ -44,7 +44,7 @@ class JobStatusManager:
         self._write(job_id, data)
 
     def update(self, job_id: str, **kwargs):
-        data = self.get(job_id) or {"job_id": job_id, "document_id": job_id}
+        data = self.get(job_id) or {"job_id": job_id, "document_id": None}
         data.update(kwargs)
         data["last_updated"] = self._now()
         self._write(job_id, data)

@@ -27,28 +27,28 @@ class AsyncDocumentProcessor:
         # 启动清理线程
         self._start_cleanup_thread()
     
-    def submit_task(self, document_id: str, file_path: str, filename: str) -> str:
+    def submit_task(self, job_id: str, file_path: str, filename: str) -> str:
         """提交处理任务"""
         future = self.executor.submit(
             self._process_document_safe,
-            document_id, file_path, filename
+            job_id, file_path, filename
         )
         
         with self._lock:
-            self.tasks[document_id] = {
+            self.tasks[job_id] = {
                 "future": future,
                 "filename": filename,
                 "submitted_at": time.time(),
                 "status": "queued"
             }
         
-        logger.info(f"Task submitted for document {filename} (ID: {document_id})")
-        return document_id
+        logger.info(f"Task submitted for file {filename} (job_id: {job_id})")
+        return job_id
     
-    def get_task_status(self, document_id: str) -> Optional[Dict[str, Any]]:
+    def get_task_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
         with self._lock:
-            task_info = self.tasks.get(document_id)
+            task_info = self.tasks.get(job_id)
             
         if not task_info:
             return None
@@ -59,6 +59,8 @@ class AsyncDocumentProcessor:
             if future.exception():
                 return {
                     "status": "failed",
+                    "job_id": job_id,
+                    "document_id": None,
                     "error": str(future.exception()),
                     "filename": task_info["filename"]
                 }
@@ -66,17 +68,22 @@ class AsyncDocumentProcessor:
                 result = future.result()
                 return {
                     "status": "completed" if result.get("success") else "failed",
+                    "job_id": job_id,
                     "filename": task_info["filename"],
-                    **result
+                    "chunk_count": result.get("chunk_count", 0),
+                    "document_id": result.get("document_id") if result.get("success") else None,
+                    "error": result.get("error"),
                 }
         else:
             return {
                 "status": "processing",
+                "job_id": job_id,
+                "document_id": None,
                 "filename": task_info["filename"],
                 "submitted_at": task_info["submitted_at"]
             }
     
-    def _process_document_safe(self, document_id: str, file_path: str, filename: str) -> Dict[str, Any]:
+    def _process_document_safe(self, job_id: str, file_path: str, filename: str) -> Dict[str, Any]:
         """安全的文档处理包装器"""
         try:
             from app.core.document_processor import doc_processor
@@ -86,7 +93,7 @@ class AsyncDocumentProcessor:
             logger.info(f"Starting processing for {filename}")
             
             # 更新状态
-            job_status.mark_processing(document_id, progress=10, message="开始处理文档")
+            job_status.mark_processing(job_id, progress=10, message="开始处理文档")
             
             # 移动文件到最终目录
             if doc_processor.is_in_temp_dir(file_path):
@@ -94,7 +101,7 @@ class AsyncDocumentProcessor:
             else:
                 real_path = file_path
             
-            job_status.mark_processing(document_id, progress=20, message="文件准备完成")
+            job_status.mark_processing(job_id, progress=20, message="文件准备完成")
             
             # 处理文档
             result = doc_processor.process_document(real_path)
@@ -103,33 +110,36 @@ class AsyncDocumentProcessor:
                 # 添加到向量存储
                 chunks = result.get('chunks', [])
                 for chunk in chunks:
-                    chunk.metadata['async_document_id'] = document_id
+                    chunk.metadata['job_id'] = job_id
                 
-                job_status.mark_processing(document_id, progress=80, message="生成向量嵌入")
+                job_status.mark_processing(job_id, progress=80, message="生成向量嵌入")
                 get_vector_store().add_documents(chunks)
                 
+                real_document_id = result.get('document_id')
                 # 标记完成
                 job_status.mark_completed(
-                    document_id,
+                    job_id,
                     chunk_count=len(chunks),
-                    filename=filename
+                    filename=filename,
+                    document_id=real_document_id
                 )
                 
                 logger.info(f"Document {filename} processed successfully")
                 return {
                     "success": True,
+                    "job_id": job_id,
                     "chunk_count": len(chunks),
-                    "document_id": document_id
+                    "document_id": real_document_id,
                 }
             else:
                 error_msg = result.get('error_message', 'Unknown processing error')
-                job_status.mark_failed(document_id, error=error_msg, filename=filename)
-                return {"success": False, "error": error_msg}
+                job_status.mark_failed(job_id, error=error_msg, filename=filename)
+                return {"success": False, "job_id": job_id, "document_id": None, "error": error_msg}
                 
         except Exception as e:
             logger.error(f"Document processing failed for {filename}: {str(e)}")
-            job_status.mark_failed(document_id, error=str(e), filename=filename)
-            return {"success": False, "error": str(e)}
+            job_status.mark_failed(job_id, error=str(e), filename=filename)
+            return {"success": False, "job_id": job_id, "document_id": None, "error": str(e)}
     
     def _start_cleanup_thread(self):
         """启动清理线程，定期清理完成的任务"""

@@ -33,6 +33,7 @@ data/quotas/*
 *.swp
 *.swo
 .windsurf/
+.augment/
 # OS
 .DS_Store
 Thumbs.db

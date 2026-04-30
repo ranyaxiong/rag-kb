@@ -70,23 +70,23 @@ async def upload_document_async(file: UploadFile = File(...), _: dict = Depends(
         # 保存到临时目录
         temp_path = doc_processor.save_to_temp_file(file_content, display_filename)
         
-        # 生成文档ID
-        document_id = str(uuid.uuid4())
+        # 生成任务ID
+        job_id = str(uuid.uuid4())
         
         # 初始化作业状态
-        job_status.init_job(document_id, display_filename, {
+        job_status.init_job(job_id, display_filename, {
             "processing_mode": "async_thread",
             "stage": "queued",
             "content_hash": content_hash,
         })
-         
         # 提交到线程池（立即返回）
-        async_processor.submit_task(document_id, temp_path, display_filename, content_hash)
+        async_processor.submit_task(job_id, temp_path, display_filename, content_hash)
         
         return {
             "success": True,
             "message": "文件上传成功，已加入处理队列",
-            "document_id": document_id,
+            "job_id": job_id,
+            "document_id": None,
             "status": "queued",
             "processing_mode": "async",
             "filename": display_filename
@@ -154,21 +154,22 @@ async def upload_document(
             # 异步处理：立即返回，后台处理
             # 异步处理使用临时目录写入，后台搬迁
             temp_path = doc_processor.save_to_temp_file(file_content, display_filename)
-            # 生成document_id并初始化作业
-            async_document_id = str(uuid.uuid4())
+            # 生成 job_id 并初始化作业
+            job_id = str(uuid.uuid4())
             try:
-                job_status.init_job(async_document_id, display_filename, {
+                job_status.init_job(job_id, display_filename, {
                     "processing_mode": "async",
                     "stage": "uploaded",
                     "content_hash": content_hash,
                 })
             except Exception:
                 pass
+            doc_record.id = job_id
             background_tasks.add_task(
                 process_document_background,
                 temp_path,
                 display_filename,
-                async_document_id,
+                job_id,
                 content_hash,
             )
             
@@ -176,7 +177,8 @@ async def upload_document(
                 "success": True,
                 "message": "File uploaded successfully and processing started in background",
                 "document": doc_record,
-                "document_id": async_document_id,
+                "job_id": job_id,
+                "document_id": None,
                 "processing_mode": "async"
             }
         else:
@@ -232,15 +234,15 @@ async def upload_document(
 async def process_document_background(
     file_path: str,
     filename: str,
-    document_id: Optional[str] = None,
+    job_id: Optional[str] = None,
     content_hash: Optional[str] = None,
 ):
     """后台处理文档"""
     try:
-        logger.info(f"Processing document: {filename} (ID: {document_id})")
+        logger.info(f"Processing document: {filename} (job_id: {job_id})")
         try:
-            if document_id:
-                job_status.mark_processing(document_id, progress=1, message="Job started")
+            if job_id:
+                job_status.mark_processing(job_id, progress=1, message="Job started")
         except Exception:
             pass
         
@@ -251,8 +253,8 @@ async def process_document_background(
             else:
                 real_path = file_path
             try:
-                if document_id:
-                    job_status.mark_processing(document_id, progress=10, message="File moved to upload dir", file_path=real_path)
+                if job_id:
+                    job_status.mark_processing(job_id, progress=10, message="File moved to upload dir", file_path=real_path)
             except Exception:
                 pass
         except Exception as move_err:
@@ -261,73 +263,78 @@ async def process_document_background(
 
         # 处理文档
         try:
-            if document_id:
-                job_status.mark_processing(document_id, progress=15, message="Processing document")
+            if job_id:
+                job_status.mark_processing(job_id, progress=15, message="Processing document")
         except Exception:
             pass
         result = doc_processor.process_document(real_path, filename, content_hash=content_hash)
         
         if result['status'] == 'completed':
-            # 添加document_id到chunks元数据
-            if document_id:
+            real_document_id = result.get("document_id")
+
+            # 添加 job_id 到 chunks 元数据
+            if job_id:
                 for chunk in result['chunks']:
-                    chunk.metadata['async_document_id'] = document_id
+                    chunk.metadata['job_id'] = job_id
             
             # 添加到向量存储
             get_vector_store().add_documents(result['chunks'])
-            logger.info(f"Document {filename} processed successfully (ID: {document_id})")
+            logger.info(f"Document {filename} processed successfully (job_id: {job_id}, document_id: {real_document_id})")
             try:
-                if document_id:
+                if job_id:
                     job_status.mark_completed(
-                        document_id,
+                        job_id,
                         chunk_count=result.get('chunk_count', 0),
                         filename=filename,
-                        processed_at=datetime.now().isoformat()
+                        processed_at=datetime.now().isoformat(),
+                        document_id=real_document_id,
                     )
             except Exception:
                 pass
         else:
-            logger.error(f"Document processing failed (ID: {document_id}): {result.get('error_message')}")
+            logger.error(f"Document processing failed (job_id: {job_id}): {result.get('error_message')}")
             try:
-                if document_id:
-                    job_status.mark_failed(document_id, error=result.get('error_message', 'Unknown error'), filename=filename)
+                if job_id:
+                    job_status.mark_failed(job_id, error=result.get('error_message', 'Unknown error'), filename=filename)
             except Exception:
                 pass
             
     except Exception as e:
-        logger.error(f"Error in background processing (ID: {document_id}): {str(e)}")
+        logger.error(f"Error in background processing (job_id: {job_id}): {str(e)}")
         try:
-            if document_id:
-                job_status.mark_failed(document_id, error=str(e), filename=filename)
+            if job_id:
+                job_status.mark_failed(job_id, error=str(e), filename=filename)
         except Exception:
             pass
 
 
-@router.get("/status/{document_id}")
-async def get_processing_status(document_id: str, _: dict = Depends(require_admin)):
+@router.get("/status/{job_id}")
+async def get_processing_status(job_id: str, _: dict = Depends(require_admin)):
     """获取处理状态（线程池版本）"""
     try:
         # 先检查线程池状态
-        thread_status = async_processor.get_task_status(document_id)
+        thread_status = async_processor.get_task_status(job_id)
         if thread_status:
             return thread_status
         
         # 回退到job_status检查
-        status_info = job_status.get_job_status(document_id)
+        status_info = job_status.get_job_status(job_id)
         if not status_info:
           #  raise HTTPException(status_code=404, detail="Document not found")
-            return {"status": "not found",
-            "message": "Document not found",
-            "document_id": document_id,
-            } 
+            return {
+                "status": "not_found",
+                "message": "Job not found",
+                "job_id": job_id,
+                "document_id": None,
+            }
         return status_info
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/status/stream/{document_id}")
-async def stream_processing_status(document_id: str, _: dict = Depends(require_admin)):
+@router.get("/status/stream/{job_id}")
+async def stream_processing_status(job_id: str, _: dict = Depends(require_admin)):
     """SSE流式状态推送"""
     async def event_generator():
         try:
@@ -336,9 +343,9 @@ async def stream_processing_status(document_id: str, _: dict = Depends(require_a
 
             while retry_count < max_retries:
                 # 复用现有状态查询逻辑
-                status = async_processor.get_task_status(document_id)
+                status = async_processor.get_task_status(job_id)
                 if not status:
-                    status = job_status.get_job_status(document_id)
+                    status = job_status.get_job_status(job_id)
 
                 if status:
                     yield f"data: {json.dumps(status)}\n\n"
@@ -348,18 +355,18 @@ async def stream_processing_status(document_id: str, _: dict = Depends(require_a
                         break
                 else:
                     # 如果找不到状态，可能是刚提交还没开始处理，继续等待
-                    yield f"data: {json.dumps({'status': 'waiting', 'message': 'Waiting for processing to start...'})}\n\n"
+                    yield f"data: {json.dumps({'status': 'waiting', 'message': 'Waiting for processing to start...', 'job_id': job_id, 'document_id': None})}\n\n"
 
                 await asyncio.sleep(1.5)  # 1.5秒轮询间隔
                 retry_count += 1
 
             # 超时后发送超时状态
             if retry_count >= max_retries:
-                yield f"data: {json.dumps({'status': 'timeout', 'message': 'Status check timeout'})}\n\n"
+                yield f"data: {json.dumps({'status': 'timeout', 'message': 'Status check timeout', 'job_id': job_id, 'document_id': None})}\n\n"
 
         except Exception as e:
-            logger.error(f"SSE stream error for document {document_id}: {str(e)}")
-            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+            logger.error(f"SSE stream error for job {job_id}: {str(e)}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e), 'job_id': job_id, 'document_id': None})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -650,67 +657,71 @@ async def get_pdf_info(document_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"Failed to get PDF info: {str(e)}")
 
 
-@router.post("/cancel/{document_id}")
-async def cancel_document_processing(document_id: str, _: dict = Depends(require_admin)):
+@router.post("/cancel/{job_id}")
+async def cancel_document_processing(job_id: str, _: dict = Depends(require_admin)):
     """
     取消正在处理的文档任务
 
     Args:
-        document_id: 文档ID（上传时返回的document_id）
+        job_id: 异步任务ID
 
     Returns:
         取消结果，包含成功状态和消息
     """
     try:
-        logger.info(f"Received cancel request for document: {document_id}")
+        logger.info(f"Received cancel request for job: {job_id}")
 
         # 调用异步处理器的取消方法
-        result = async_processor.cancel_task(document_id)
+        result = async_processor.cancel_task(job_id)
 
         if result["success"]:
-            logger.info(f"Successfully cancelled task: {document_id}")
+            logger.info(f"Successfully cancelled task: {job_id}")
             return {
                 "success": True,
                 "message": result["message"],
-                "document_id": document_id,
+                "job_id": job_id,
+                "document_id": None,
                 "status": result["status"]
             }
         else:
-            logger.warning(f"Failed to cancel task {document_id}: {result['message']}")
+            logger.warning(f"Failed to cancel task {job_id}: {result['message']}")
             return {
                 "success": False,
                 "message": result["message"],
-                "document_id": document_id,
+                "job_id": job_id,
+                "document_id": None,
                 "status": result["status"]
             }
 
     except Exception as e:
-        logger.error(f"Error cancelling document processing for {document_id}: {str(e)}")
+        logger.error(f"Error cancelling document processing for {job_id}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to cancel document processing: {str(e)}"
         )
 
 
-@router.get("/cancel-status/{document_id}")
-async def get_cancel_status(document_id: str, _: dict = Depends(require_admin)):
+@router.get("/cancel-status/{job_id}")
+async def get_cancel_status(job_id: str, _: dict = Depends(require_admin)):
     """
     查询任务是否可以取消
 
     Args:
-        document_id: 文档ID
+        job_id: 异步任务ID
 
     Returns:
         任务状态信息，包括是否可以取消
     """
     try:
         # 从 job_status 获取任务状态
-        job_info = job_status.get(document_id)
+        job_info = job_status.get(job_id)
 
         if not job_info:
             return {
                 "success": False,
                 "message": "任务不存在",
+                "job_id": job_id,
+                "document_id": None,
                 "cancellable": False
             }
 
@@ -721,7 +732,8 @@ async def get_cancel_status(document_id: str, _: dict = Depends(require_admin)):
 
         return {
             "success": True,
-            "document_id": document_id,
+            "job_id": job_id,
+            "document_id": job_info.get("document_id"),
             "status": status,
             "cancellable": cancellable,
             "progress": job_info.get("progress", 0),
@@ -729,7 +741,7 @@ async def get_cancel_status(document_id: str, _: dict = Depends(require_admin)):
         }
 
     except Exception as e:
-        logger.error(f"Error getting cancel status for {document_id}: {str(e)}")
+        logger.error(f"Error getting cancel status for {job_id}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get cancel status: {str(e)}"

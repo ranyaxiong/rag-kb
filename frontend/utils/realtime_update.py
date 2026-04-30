@@ -244,7 +244,7 @@ def setup_realtime_update_system(backend_url: str):
     st.components.v1.html(js_code, height=0, width=0)
 
 
-def create_realtime_document_monitor(document_id: str, client_url: str, mode: str) -> str:
+def create_realtime_document_monitor(job_id: str, client_url: str, mode: str) -> str:
     """
     创建实时文档处理监控器
     处理完成后直接更新页面元素，无需刷新
@@ -401,14 +401,14 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
         '''
 
     return f"""
-    <div id="realtime-monitor-{document_id}" style="margin: 10px 0; padding: 12px; border: 2px solid #e1f5fe; border-radius: 8px; background: linear-gradient(135deg, #f8f9fa, #e3f2fd);">
-        <div id="realtime-status-{document_id}" style="font-weight: bold; color: #1976d2;">🔄 正在监听文档处理状态...</div>
+    <div id="realtime-monitor-{job_id}" style="margin: 10px 0; padding: 12px; border: 2px solid #e1f5fe; border-radius: 8px; background: linear-gradient(135deg, #f8f9fa, #e3f2fd);">
+        <div id="realtime-status-{job_id}" style="font-weight: bold; color: #1976d2;">🔄 正在监听文档处理状态...</div>
     </div>
 
     <script>
     (function() {{
-        const statusDiv = document.getElementById('realtime-status-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('realtime-status-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
         let isCompleted = false;
 
         eventSource.onmessage = function(event) {{
@@ -419,6 +419,7 @@ def create_realtime_document_monitor(document_id: str, client_url: str, mode: st
                 const status = data.status;
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     isCompleted = true;
                     eventSource.close();
                     {completion_action}

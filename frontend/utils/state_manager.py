@@ -26,8 +26,9 @@ class StateManager:
         if "stats_cache" not in st.session_state:
             st.session_state.stats_cache = None
 
-        if "processing_documents" not in st.session_state:
-            st.session_state.processing_documents = set()
+        if "processing_jobs" not in st.session_state:
+            existing_jobs = st.session_state.get("processing_documents", set())
+            st.session_state.processing_jobs = set(existing_jobs)
 
         if "refresh_triggers" not in st.session_state:
             st.session_state.refresh_triggers = {}
@@ -82,31 +83,27 @@ class StateManager:
         st.session_state[f"{cache_key}_cache"] = data
 
     @staticmethod
-    def add_processing_document(doc_id: str):
-        """添加正在处理的文档ID"""
-        if "processing_documents" not in st.session_state:
-            st.session_state.processing_documents = set()
-        st.session_state.processing_documents.add(doc_id)
+    def add_processing_job(job_id: str):
+        if "processing_jobs" not in st.session_state:
+            st.session_state.processing_jobs = set()
+        st.session_state.processing_jobs.add(job_id)
 
     @staticmethod
-    def remove_processing_document(doc_id: str):
-        """移除正在处理的文档ID"""
-        if "processing_documents" in st.session_state:
-            st.session_state.processing_documents.discard(doc_id)
+    def remove_processing_job(job_id: str):
+        if "processing_jobs" in st.session_state:
+            st.session_state.processing_jobs.discard(job_id)
 
         # 文档处理完成，触发相关组件刷新
         StateManager.trigger_refresh("documents", 1)  # 1秒后刷新文档列表
         StateManager.trigger_refresh("stats", 1)      # 1秒后刷新统计信息
 
     @staticmethod
-    def get_processing_documents() -> set:
-        """获取正在处理的文档ID集合"""
-        return st.session_state.get("processing_documents", set())
+    def get_processing_jobs() -> set:
+        return st.session_state.get("processing_jobs", set())
 
     @staticmethod
-    def is_document_processing(doc_id: str) -> bool:
-        """检查文档是否正在处理"""
-        return doc_id in StateManager.get_processing_documents()
+    def is_job_processing(job_id: str) -> bool:
+        return job_id in StateManager.get_processing_jobs()
 
     @staticmethod
     def clear_caches():
@@ -124,11 +121,11 @@ class StateManager:
     def get_refresh_status() -> Dict[str, Any]:
         """获取刷新状态信息（调试用）"""
         current_time = time.time()
-        processing_docs = StateManager.get_processing_documents()
+        processing_jobs = StateManager.get_processing_jobs()
 
         return {
             "current_time": datetime.fromtimestamp(current_time).strftime("%H:%M:%S"),
-            "processing_documents": list(processing_docs),
+            "processing_jobs": list(processing_jobs),
             "last_document_refresh": st.session_state.get("last_document_refresh", 0),
             "last_stats_refresh": st.session_state.get("last_stats_refresh", 0),
             "refresh_triggers": st.session_state.get("refresh_triggers", {}),
@@ -171,24 +168,25 @@ class RealtimeUpdater:
     """实时更新器，使用JavaScript和Session State实现无刷新更新"""
 
     @staticmethod
-    def create_document_completion_handler(doc_id: str, component_name: str = "documents") -> str:
+    def create_document_completion_handler(job_id: str, component_name: str = "documents") -> str:
         """创建文档处理完成的JavaScript处理器"""
         js_code = f"""
         <script>
         (function() {{
             // 使用postMessage与Streamlit通信
-            function notifyCompletion() {{
+            function notifyCompletion(documentId) {{
                 // 通知Streamlit文档处理完成
                 window.parent.postMessage({{
                     type: 'document_completed',
-                    document_id: '{doc_id}',
+                    job_id: '{job_id}',
+                    document_id: documentId || null,
                     component: '{component_name}',
                     timestamp: Date.now()
                 }}, '*');
             }}
 
             // 监听文档处理状态
-            const eventSource = new EventSource('/api/documents/status/stream/{doc_id}');
+            const eventSource = new EventSource('/api/documents/status/stream/{job_id}');
 
             eventSource.onmessage = function(event) {{
                 try {{
@@ -197,11 +195,11 @@ class RealtimeUpdater:
 
                     if (status === 'completed') {{
                         eventSource.close();
-                        notifyCompletion();
+                        notifyCompletion(data.document_id || null);
                     }} else if (status === 'failed') {{
                         eventSource.close();
                         // 失败也需要通知，以便清理状态
-                        notifyCompletion();
+                        notifyCompletion(null);
                     }}
                 }} catch (e) {{
                     console.error('Failed to parse SSE data:', e);

@@ -67,7 +67,7 @@ class FileUploadComponent(AutoRefreshMixin):
         except Exception:
             return 300
     
-    def _cancel_processing(self, document_id: str, filename: str):
+    def _cancel_processing(self, job_id: str, filename: str):
         """取消文档处理（服务端请求 + 浏览器兜底请求）"""
         # === 临时调试开始 ===
         #st.warning(f"[DEBUG] 点击取消: {document_id} - {filename}")
@@ -75,7 +75,7 @@ class FileUploadComponent(AutoRefreshMixin):
         # 先查询任务当前是否仍可取消
         try:
             status_resp = requests.get(
-                f"{self.backend_url}/api/documents/cancel-status/{document_id}",
+                f"{self.backend_url}/api/documents/cancel-status/{job_id}",
                 headers=self._auth_headers(),
                 timeout=5,
             )
@@ -87,11 +87,11 @@ class FileUploadComponent(AutoRefreshMixin):
                 if not cancellable:
                     # 本地清理，避免列表中继续显示
                     try:
-                        StateManager.remove_processing_document(document_id)
+                        StateManager.remove_processing_job(job_id)
                     except Exception:
                         pass
-                    if document_id in st.session_state.upload_processing_docs:
-                        del st.session_state.upload_processing_docs[document_id]
+                    if job_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[job_id]
 
                     if current_status in ("completed", "cancelled"):
                         st.info(f"ℹ️ {filename} 已处理完成或已取消，无需再次取消。")
@@ -105,7 +105,7 @@ class FileUploadComponent(AutoRefreshMixin):
         server_ok = False
         try:
             response = requests.post(
-                f"{self.backend_url}/api/documents/cancel/{document_id}",
+                f"{self.backend_url}/api/documents/cancel/{job_id}",
                 headers=self._auth_headers(),
                 timeout=5
             )
@@ -116,22 +116,22 @@ class FileUploadComponent(AutoRefreshMixin):
 
         # 无论服务端是否成功，先本地清理，避免继续轮询造成闪烁
         try:
-            StateManager.remove_processing_document(document_id)
+            StateManager.remove_processing_job(job_id)
         except Exception:
             pass
-        if document_id in st.session_state.upload_processing_docs:
-            del st.session_state.upload_processing_docs[document_id]
+        if job_id in st.session_state.upload_processing_docs:
+            del st.session_state.upload_processing_docs[job_id]
 
         if server_ok:
             st.success(f"✅ 已取消 {filename} 的处理")
         else:
             st.info(f"📝 已尝试发送取消请求：{filename} （如任务已完成，将自动从列表中消失）")
 
-    def _check_processing_status(self, document_id: str, filename: str):
+    def _check_processing_status(self, job_id: str, filename: str):
         """检查文档处理状态"""
         try:
             response = requests.get(
-                f"{self.backend_url}/api/documents/status/{document_id}",
+                f"{self.backend_url}/api/documents/status/{job_id}",
                 headers=self._auth_headers(),
                 timeout=10
             )
@@ -141,26 +141,41 @@ class FileUploadComponent(AutoRefreshMixin):
                 status = result.get('status', 'unknown')
 
                 if status == 'completed':
+                    real_document_id = result.get('document_id')
                     st.success(f"✅ {filename} 处理完成!")
                     chunk_count = result.get('chunk_count', 0)
                     if chunk_count > 0:
                         st.info(f"📄 文档已分割成 {chunk_count} 个块，可用于问答")
+                    if real_document_id:
+                        st.session_state["last_completed_document_id"] = real_document_id
                     # 从处理列表中移除
-                    if document_id in st.session_state.upload_processing_docs:
-                        del st.session_state.upload_processing_docs[document_id]
+                    if job_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[job_id]
+                    try:
+                        StateManager.remove_processing_job(job_id)
+                    except Exception:
+                        pass
                 elif status == 'cancelled':
                     st.warning(f"⚠️ {filename} 已被取消")
                     # 从处理列表中移除
-                    if document_id in st.session_state.upload_processing_docs:
-                        del st.session_state.upload_processing_docs[document_id]
+                    if job_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[job_id]
+                    try:
+                        StateManager.remove_processing_job(job_id)
+                    except Exception:
+                        pass
                 elif status == 'failed':
                     err = result.get('error') or result.get('message') or '未知错误'
                     st.error(f"❌ {filename} 处理失败: {err}")
                     # 可选：显示简单建议
                     st.info("💡 建议：确认文档未加密、扫描质量清晰；如为扫描版PDF请稍后重试或压缩体积后再传。")
                     # 从处理列表中移除
-                    if document_id in st.session_state.upload_processing_docs:
-                        del st.session_state.upload_processing_docs[document_id]
+                    if job_id in st.session_state.upload_processing_docs:
+                        del st.session_state.upload_processing_docs[job_id]
+                    try:
+                        StateManager.remove_processing_job(job_id)
+                    except Exception:
+                        pass
                 elif status == 'processing':
                     progress = result.get('progress')
                     message = result.get('message')
@@ -188,10 +203,10 @@ class FileUploadComponent(AutoRefreshMixin):
 
         to_remove = []
 
-        for doc_id, doc_info in list(upload_docs.items()):
+        for job_id, doc_info in list(upload_docs.items()):
             try:
                 resp = requests.get(
-                    f"{self.backend_url}/api/documents/status/{doc_id}",
+                    f"{self.backend_url}/api/documents/status/{job_id}",
                     headers=self._auth_headers(),
                     timeout=5,
                 )
@@ -199,19 +214,19 @@ class FileUploadComponent(AutoRefreshMixin):
                     data = resp.json()
                     status = (data.get("status") or "").lower()
                     # 后端可能返回: completed / failed / cancelled / not found 等
-                    if status in ("completed", "failed", "cancelled", "not found", "timeout", "error"):
-                        to_remove.append(doc_id)
+                    if status in ("completed", "failed", "cancelled", "not_found", "timeout", "error"):
+                        to_remove.append(job_id)
                 elif resp.status_code == 404:
-                    to_remove.append(doc_id)
+                    to_remove.append(job_id)
             except Exception:
                 # 查询失败时不做强制删除，等下次再清理
                 continue
 
-        for doc_id in to_remove:
-            if doc_id in st.session_state.upload_processing_docs:
-                del st.session_state.upload_processing_docs[doc_id]
+        for job_id in to_remove:
+            if job_id in st.session_state.upload_processing_docs:
+                del st.session_state.upload_processing_docs[job_id]
             try:
-                StateManager.remove_processing_document(doc_id)
+                StateManager.remove_processing_job(job_id)
             except Exception:
                 pass
 
@@ -226,19 +241,19 @@ class FileUploadComponent(AutoRefreshMixin):
         upload_docs = st.session_state.get("upload_processing_docs", {})
         if upload_docs:
             with st.expander(f"🔄 正在处理的文档 ({len(upload_docs)})", expanded=True):
-                for doc_id, doc_info in list(upload_docs.items()):
+                for job_id, doc_info in list(upload_docs.items()):
                     col1, col2, col3 = st.columns([3, 1, 1])
 
                     with col1:
                         st.write(f"📄 {doc_info['filename']}")
 
                     with col2:
-                        if st.button("📊 状态", key=f"check_{doc_id}"):
-                            self._check_processing_status(doc_id, doc_info['filename'])
+                        if st.button("📊 状态", key=f"check_{job_id}"):
+                            self._check_processing_status(job_id, doc_info['filename'])
 
                     with col3:
-                        if st.button("🛑 取消", key=f"cancel_list_{doc_id}"):
-                            self._cancel_processing(doc_id, doc_info['filename'])
+                        if st.button("🛑 取消", key=f"cancel_list_{job_id}"):
+                            self._cancel_processing(job_id, doc_info['filename'])
 
                 st.markdown("---")
         
@@ -320,12 +335,14 @@ class FileUploadComponent(AutoRefreshMixin):
 
                     if result.get('processing_mode') == 'async':
                         # 异步处理模式
-                        document_id = result.get('document_id')
-                        st.info(f"🔄 文档正在后台异步处理中... 文档ID: `{document_id}`")
+                        job_id = result.get('job_id') or result.get('document_id')
+                        st.info(f"🔄 文档正在后台异步处理中... 任务ID: `{job_id}`")
 
                         # 添加到处理队列和session state
-                        StateManager.add_processing_document(document_id)
-                        st.session_state.upload_processing_docs[document_id] = {
+                        StateManager.add_processing_job(job_id)
+                        st.session_state.upload_processing_docs[job_id] = {
+                            "job_id": job_id,
+                            "document_id": None,
                             "filename": uploaded_file.name,
                             "upload_time": uploaded_file.size
                         }
@@ -346,12 +363,12 @@ class FileUploadComponent(AutoRefreshMixin):
                         col1, col2 = st.columns(2)
 
                         with col1:
-                            if st.button(f"📊 查看处理状态", key=f"status_{document_id}"):
-                                self._check_processing_status(document_id, uploaded_file.name)
+                            if st.button(f"📊 查看处理状态", key=f"status_{job_id}"):
+                                self._check_processing_status(job_id, uploaded_file.name)
 
                         with col2:
-                            if st.button(f"🛑 取消处理", key=f"cancel_{document_id}", type="secondary"):
-                                self._cancel_processing(document_id, uploaded_file.name)
+                            if st.button(f"🛑 取消处理", key=f"cancel_{job_id}", type="secondary"):
+                                self._cancel_processing(job_id, uploaded_file.name)
 
                         # 友好提示
                         st.info("💡 **等待期间您可以：**")
@@ -363,8 +380,8 @@ class FileUploadComponent(AutoRefreshMixin):
                         st.info("文档正在后台处理中，请稍候...")
                     
                     # 显示基本信息
-                    if result.get('document_id'):
-                        st.code(f"文档ID: {result['document_id']}")
+                    if result.get('job_id'):
+                        st.code(f"任务ID: {result['job_id']}")
                         st.caption("可在“正在处理的文档”中使用“📊 状态”查看最新进度。")
                     if result.get('filename'):
                         st.code(f"文件名: {result['filename']}")

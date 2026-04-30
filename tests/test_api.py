@@ -95,6 +95,35 @@ class TestDocumentAPI:
         response = client.get("/api/documents/")
         assert response.status_code == 401
 
+    @patch('app.api.documents.async_processor')
+    @patch('app.api.documents.job_status')
+    @patch('app.api.documents.doc_processor')
+    def test_upload_document_async_returns_job_id(self, mock_processor, mock_job_status, mock_async_processor):
+        """测试异步上传返回 job_id 而不是 document_id"""
+        mock_processor.validate_filename.return_value = "test.txt"
+        mock_processor.is_supported_file.return_value = True
+        mock_processor.compute_content_hash.return_value = "hash-async-1"
+        mock_processor.save_to_temp_file.return_value = "/tmp/test.txt"
+
+        with patch('app.api.documents.get_vector_store') as mock_get_vs:
+            mock_vs = MagicMock()
+            mock_vs.document_exists_by_content_hash.return_value = False
+            mock_get_vs.return_value = mock_vs
+
+            files = {"file": ("test.txt", b"test content", "text/plain")}
+            response = client.post("/api/documents/upload-async", files=files, headers=_admin_headers())
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["job_id"]
+        assert data["document_id"] is None
+        assert data["status"] == "queued"
+        assert data["processing_mode"] == "async"
+        assert data["filename"] == "test.txt"
+        mock_job_status.init_job.assert_called_once()
+        assert mock_async_processor.submit_task.call_args.args[0] == data["job_id"]
+
     @patch('app.api.documents.doc_processor')
     def test_upload_document_success(self, mock_processor):
         """测试成功上传文档"""
@@ -258,6 +287,21 @@ class TestDocumentAPI:
 
         response = client.delete("/api/documents/nonexistent", headers=_admin_headers())
         assert response.status_code == 404
+
+    @patch('app.api.documents.async_processor')
+    @patch('app.api.documents.job_status')
+    def test_get_processing_status_not_found_returns_job_fields(self, mock_job_status, mock_async_processor):
+        mock_async_processor.get_task_status.return_value = None
+        mock_job_status.get_job_status.return_value = None
+
+        response = client.get("/api/documents/status/nonexistent-job", headers=_admin_headers())
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "not_found"
+        assert data["message"] == "Job not found"
+        assert data["job_id"] == "nonexistent-job"
+        assert data["document_id"] is None
 
 
 class TestQAAPI:

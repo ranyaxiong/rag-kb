@@ -84,7 +84,7 @@ class DocumentManagerComponent(AutoRefreshMixin):
                 st.metric("总块数", stats.get("total_chunks", 0))
 
             # 显示处理中的文档数量
-            processing_count = len(StateManager.get_processing_documents())
+            processing_count = len(StateManager.get_processing_jobs())
             if processing_count > 0:
                 st.info(f"🔄 {processing_count} 个文档正在处理中...")
         else:

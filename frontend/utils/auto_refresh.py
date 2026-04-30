@@ -5,19 +5,19 @@ import streamlit as st
 import time
 
 
-def setup_auto_refresh(document_id: str, client_url: str) -> str:
+def setup_auto_refresh(job_id: str, client_url: str) -> str:
     """
     设置自动刷新机制 - 使用简单的JavaScript定时器
     当文档处理完成时自动刷新页面指定区域
     """
     js_code = f"""
-    <div id="sse-status-{document_id}" style="margin: 10px 0;">
-        <div id="status-text-{document_id}">🔄 正在监听处理状态...</div>
+    <div id="sse-status-{job_id}" style="margin: 10px 0;">
+        <div id="status-text-{job_id}">🔄 正在监听处理状态...</div>
     </div>
     <script>
     (function() {{
-        const statusDiv = document.getElementById('status-text-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('status-text-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
 
         eventSource.onmessage = function(event) {{
             try {{
@@ -26,6 +26,7 @@ def setup_auto_refresh(document_id: str, client_url: str) -> str:
                 console.log('SSE received:', data);
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     statusDiv.innerHTML = '✅ 处理完成！文档列表将在3秒后自动更新...';
                     eventSource.close();
 

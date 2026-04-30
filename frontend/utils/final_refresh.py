@@ -5,7 +5,7 @@
 import streamlit as st
 
 
-def create_simple_auto_refresh_html(document_id: str, client_url: str, mode: str) -> str:
+def create_simple_auto_refresh_html(job_id: str, client_url: str, mode: str) -> str:
     """
     创建简单的自动刷新HTML
     使用纯JavaScript实现，避免Streamlit复杂性
@@ -40,14 +40,14 @@ def create_simple_auto_refresh_html(document_id: str, client_url: str, mode: str
         '''
 
     return f"""
-    <div id="refresh-monitor-{document_id}" style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9;">
-        <div id="status-{document_id}" style="font-weight: bold;">🔄 正在监听文档处理状态...</div>
+    <div id="refresh-monitor-{job_id}" style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9;">
+        <div id="status-{job_id}" style="font-weight: bold;">🔄 正在监听文档处理状态...</div>
     </div>
 
     <script>
     (function() {{
-        const statusDiv = document.getElementById('status-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('status-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
 
         let isCompleted = false;
 
@@ -61,6 +61,7 @@ def create_simple_auto_refresh_html(document_id: str, client_url: str, mode: str
                 console.log('Document status:', status, data);
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     isCompleted = true;
                     eventSource.close();
                     {refresh_action}

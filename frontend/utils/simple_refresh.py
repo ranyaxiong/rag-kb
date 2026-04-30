@@ -41,30 +41,30 @@ def setup_page_auto_refresh(seconds: int):
     st.components.v1.html(js_code, height=0, width=0)
 
 
-def add_refresh_notification(document_id: str, refresh_mode: str, client_url: str):
+def add_refresh_notification(job_id: str, refresh_mode: str, client_url: str):
     """根据用户选择的刷新模式添加相应的处理"""
     if refresh_mode == "手动刷新（默认）":
-        return create_manual_refresh_sse(document_id, client_url)
+        return create_manual_refresh_sse(job_id, client_url)
     elif refresh_mode == "10秒后自动刷新":
-        return create_delayed_refresh_sse(document_id, client_url, 10)
+        return create_delayed_refresh_sse(job_id, client_url, 10)
     elif refresh_mode == "30秒后自动刷新":
-        return create_delayed_refresh_sse(document_id, client_url, 30)
+        return create_delayed_refresh_sse(job_id, client_url, 30)
     elif refresh_mode == "处理完成立即刷新页面":
-        return create_immediate_refresh_sse(document_id, client_url)
+        return create_immediate_refresh_sse(job_id, client_url)
     else:
-        return create_manual_refresh_sse(document_id, client_url)
+        return create_manual_refresh_sse(job_id, client_url)
 
 
-def create_manual_refresh_sse(document_id: str, client_url: str) -> str:
+def create_manual_refresh_sse(job_id: str, client_url: str) -> str:
     """创建手动刷新模式的SSE监听"""
     return f"""
-    <div id="sse-status-{document_id}" style="margin: 10px 0;">
-        <div id="status-text-{document_id}">🔄 正在监听处理状态...</div>
+    <div id="sse-status-{job_id}" style="margin: 10px 0;">
+        <div id="status-text-{job_id}">🔄 正在监听处理状态...</div>
     </div>
     <script>
     (function() {{
-        const statusDiv = document.getElementById('status-text-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('status-text-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
 
         eventSource.onmessage = function(event) {{
             try {{
@@ -72,6 +72,7 @@ def create_manual_refresh_sse(document_id: str, client_url: str) -> str:
                 const status = data.status;
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     statusDiv.innerHTML = '✅ 处理完成！请手动点击右侧的刷新按钮查看新文档';
                     eventSource.close();
                 }} else if (status === 'failed') {{
@@ -111,16 +112,16 @@ def create_manual_refresh_sse(document_id: str, client_url: str) -> str:
     """
 
 
-def create_delayed_refresh_sse(document_id: str, client_url: str, delay_seconds: int) -> str:
+def create_delayed_refresh_sse(job_id: str, client_url: str, delay_seconds: int) -> str:
     """创建延迟自动刷新模式的SSE监听"""
     return f"""
-    <div id="sse-status-{document_id}" style="margin: 10px 0;">
-        <div id="status-text-{document_id}">🔄 正在监听处理状态...</div>
+    <div id="sse-status-{job_id}" style="margin: 10px 0;">
+        <div id="status-text-{job_id}">🔄 正在监听处理状态...</div>
     </div>
     <script>
     (function() {{
-        const statusDiv = document.getElementById('status-text-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('status-text-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
 
         eventSource.onmessage = function(event) {{
             try {{
@@ -128,6 +129,7 @@ def create_delayed_refresh_sse(document_id: str, client_url: str, delay_seconds:
                 const status = data.status;
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     eventSource.close();
                     let countdown = {delay_seconds};
                     statusDiv.innerHTML = `✅ 处理完成！页面将在${{countdown}}秒后自动刷新...`;
@@ -178,16 +180,16 @@ def create_delayed_refresh_sse(document_id: str, client_url: str, delay_seconds:
     """
 
 
-def create_immediate_refresh_sse(document_id: str, client_url: str) -> str:
+def create_immediate_refresh_sse(job_id: str, client_url: str) -> str:
     """创建立即刷新模式的SSE监听"""
     return f"""
-    <div id="sse-status-{document_id}" style="margin: 10px 0;">
-        <div id="status-text-{document_id}">🔄 正在监听处理状态...</div>
+    <div id="sse-status-{job_id}" style="margin: 10px 0;">
+        <div id="status-text-{job_id}">🔄 正在监听处理状态...</div>
     </div>
     <script>
     (function() {{
-        const statusDiv = document.getElementById('status-text-{document_id}');
-        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{document_id}');
+        const statusDiv = document.getElementById('status-text-{job_id}');
+        const eventSource = new EventSource('{client_url}/api/documents/status/stream/{job_id}');
 
         eventSource.onmessage = function(event) {{
             try {{
@@ -195,6 +197,7 @@ def create_immediate_refresh_sse(document_id: str, client_url: str) -> str:
                 const status = data.status;
 
                 if (status === 'completed') {{
+                    window.__rag_last_completed_document_id = data.document_id || null;
                     statusDiv.innerHTML = '✅ 处理完成！正在刷新页面...';
                     eventSource.close();
                     setTimeout(() => {{

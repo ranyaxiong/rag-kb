@@ -412,7 +412,7 @@ class VectorStore:
             first = metadatas[0] if chunk_count > 0 else {}
             return {
                 "document_id": first.get("document_id"),
-                "async_document_id": first.get("async_document_id"),
+                "job_id": first.get("job_id"),
                 "filename": first.get("filename"),
                 "chunk_count": chunk_count,
                 "processed_at": first.get("processed_at"),
@@ -422,9 +422,8 @@ class VectorStore:
             logger.warning(f"Error getting document summary by {key}: {str(e)}")
             return None
 
-    def get_summary_by_async_document_id(self, async_document_id: str) -> Optional[Dict[str, Any]]:
-        """按异步返回的document_id查询文档汇总（轻量）"""
-        return self._get_document_summary_by_key("async_document_id", async_document_id)
+    def get_summary_by_job_id(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self._get_document_summary_by_key("job_id", job_id)
 
     def get_summary_by_document_id(self, document_id: str) -> Optional[Dict[str, Any]]:
         """按内部document_id查询文档汇总（轻量）"""
