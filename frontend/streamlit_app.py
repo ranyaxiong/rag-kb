@@ -3,6 +3,7 @@
 Streamlit前端应用
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import os
 from datetime import datetime
@@ -249,7 +250,7 @@ def init_websocket_connection(client_id: str):
     }})();
     </script>
     """
-    st.components.v1.html(js_code, height=0, width=0)
+    components.html(js_code, height=0, width=0)
 
 
 def build_byok_headers() -> dict:
@@ -334,7 +335,7 @@ def save_user_settings():
         except Exception as exc:
             logger.warning(f"JS-eval save failed, fallback to HTML: {exc}")
 
-    st.components.v1.html(
+    components.html(
         f"""
         <script>
         (function() {{
@@ -390,32 +391,7 @@ def clear_user_settings():
         })();
         </script>
         """
-        st.components.v1.html(clear_js, height=0, width=0)
-
-def debug_localStorage():
-    """调试localStorage状态"""
-    if JS_EVAL_AVAILABLE:
-        try:
-            # 读取所有localStorage值进行调试
-            debug_info = streamlit_js_eval(
-                js_expressions="""
-                JSON.stringify({
-                    api_key: localStorage.getItem('rag_byok_api_key'),
-                    provider: localStorage.getItem('rag_byok_provider'),
-                    base_url: localStorage.getItem('rag_byok_base_url'),
-                    model: localStorage.getItem('rag_byok_model'),
-                    last_saved: localStorage.getItem('rag_byok_last_saved'),
-                    all_keys: Object.keys(localStorage).filter(k => k.startsWith('rag_'))
-                })
-                """,
-                key="debug_localStorage",
-                want_output=True
-            )
-            return debug_info
-        except Exception as e:
-            return f"调试localStorage时出错: {e}"
-    else:
-        return "streamlit-js-eval 不可用"
+        components.html(clear_js, height=0, width=0)
 
 
 def display_quota_info():
@@ -505,45 +481,9 @@ def main():
 
         st.header("🔑 模型设置 (BYOK)")
 
-        # 总是显示调试信息来排查问题
-        st.write("**调试信息：**")
-        # localStorage调试
-        st.caption(f"JS Eval available: {JS_EVAL_AVAILABLE}")
-        debug_info = debug_localStorage()
-        st.code(debug_info, language="json")
-
-        # Fallback: 如果 load_user_settings 首次未能取到值，这里用调试读取到的 localStorage 结果再补写一次
-        try:
-            _parsed = json.loads(debug_info) if isinstance(debug_info, str) else {}
-            def _unquote(v, default=""):
-                if v is None:
-                    return default
-                try:
-                    return (json.loads(v) if isinstance(v, str) else v) or default
-                except Exception:
-                    return v or default
-            # 仅当当前会话没有key，且本轮不是“跳过恢复/刚清除”时，才进行兜底恢复
-            if (not st.session_state.get('byok_api_key')) and (not st.session_state.get('skip_restore_once')) and (not st.session_state.get('just_cleared')):
-                st.session_state.byok_api_key = (_unquote(_parsed.get('api_key'), "")).strip()
-                st.session_state.byok_provider = (_unquote(_parsed.get('provider'), 'openai')).strip()
-                st.session_state.byok_base_url = (_unquote(_parsed.get('base_url'), "")).strip()
-                st.session_state.byok_model = (_unquote(_parsed.get('model'), 'gpt-3.5-turbo')).strip()
-                st.session_state.settings_status = SettingsStatus.LOADED.value
-        except Exception as _e:
-            logger.info(f"Fallback restore skipped: {type(_e).__name__}: {_e}")
-
-        # Session State 调试（放在 fallback 之后、表单之前，确保展示的就是最新会话值）
-        st.code(f"""
-                Session State Values:
-                - byok_api_key: {bool(st.session_state.get('byok_api_key', ''))}
-                - byok_provider: {st.session_state.get('byok_provider', 'N/A')}
-                - byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
-                - byok_model: {st.session_state.get('byok_model', 'N/A')}
-                - settings_status: {st.session_state.get('settings_status', 'idle')}
-                - settings_attempts: {st.session_state.get('settings_attempts', 0)}
-                - settings_just_saved: {st.session_state.get('settings_just_saved', False)}
-        """)
-
+        api_key_configured = bool(st.session_state.get("byok_api_key"))
+        st.caption(f"API Key：{'已配置' if api_key_configured else '未配置'}")
+        
         with st.form("byok_form"):
             api_key = st.text_input("API Key", type="password", value=st.session_state.byok_api_key, help="设置将保存在浏览器本地，刷新页面不会丢失")
 
@@ -673,25 +613,13 @@ def main():
 
 
         st.markdown("---")
-
-        # Session State
-        st.code(f"""
-Session State Values (after form):
-- byok_api_key: {bool(st.session_state.get('byok_api_key', ''))}
-- byok_provider: {st.session_state.get('byok_provider', 'N/A')}
-- byok_base_url: {st.session_state.get('byok_base_url', 'N/A')}
-- byok_model: {st.session_state.get('byok_model', 'N/A')}
-- settings_status: {st.session_state.get('settings_status', 'idle')}
-- settings_attempts: {st.session_state.get('settings_attempts', 0)}
-- settings_just_saved: {st.session_state.get('settings_just_saved', False)}
-        """)
-
         st.subheader("📊 统计信息")
         if admin_logged_in:
             try:
                 stats_response = requests.get(
                     f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview",
                     headers=admin_headers,
+                    timeout = 5
                 )
                 if stats_response.status_code == 200:
                     stats = stats_response.json()

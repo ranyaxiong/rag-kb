@@ -223,12 +223,22 @@ async def ask_question(payload: QuestionRequest, request: Request):
             # 使用默认全局引擎（便于单元测试使用 mock）
             engine = get_qa_engine()
         
-        # 执行问答
-        response = engine.ask(
-            question=payload.question,
-            max_sources=payload.max_sources,
-            document_id=payload.document_id
-        )
+        # 执行问答（信号量保护，防止 LLM 并发过载）
+        from app.core.concurrency import get_llm_semaphore
+        import asyncio
+        semaphore = get_llm_semaphore()
+        if semaphore._value == 0:
+            logger.warning("LLM semaphore exhausted, rejecting ask request")
+            raise HTTPException(status_code=503, detail="服务器繁忙，请稍后重试")
+        async with semaphore:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: engine.ask(
+                    question=payload.question,
+                    max_sources=payload.max_sources,
+                    document_id=payload.document_id,
+                ),
+            )
         
         return response
         

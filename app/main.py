@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.concurrency import ConcurrencyLimitMiddleware
 from app.api.documents import router as documents_router
 from app.api.qa import router as qa_router
 from app.api.cost_optimization import router as cost_router
@@ -44,8 +45,14 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description="RAG知识库API服务",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if settings.enable_api_docs else None,
+    redoc_url="/redoc" if settings.enable_api_docs else None,
+    openapi_url="/openapi.json" if settings.enable_api_docs else None,
 )
+
+# 并发保护（注意：中间件后注册的先执行，所以并发限制放在 CORS 之后注册）
+app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=settings.max_concurrent_requests)
 
 # 配置CORS
 app.add_middleware(
@@ -59,6 +66,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
 app.include_router(qa_router, prefix="/api/qa", tags=["qa"])
+# cost_router 自身不再携带 /api/cost 前缀，统一在主应用中挂载
 app.include_router(cost_router, prefix="/api/cost", tags=["cost"])
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
@@ -104,7 +112,6 @@ async def get_info():
     return {
         "app_name": settings.app_name,
         "version": settings.app_version,
-        "debug": settings.debug,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
         "max_sources": settings.max_sources,
@@ -119,6 +126,6 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.backend_host,
         port=settings.backend_port,
-        reload=settings.debug,
+        reload=False,
         log_level="info"
     )

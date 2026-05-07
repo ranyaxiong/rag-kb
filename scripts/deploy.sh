@@ -129,6 +129,11 @@ export API_KEY
 
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.production.yml -f docker/docker-compose.certbot.override.yml up -d --build backend frontend nginx
 
+echo "🔎检查8000/8501是否被公网发布..."
+if [ -x scripts/check-public-ports.sh ]; then
+  scripts/check-public-ports.sh
+fi
+
 echo "⏳ 等待服务启动..."
 sleep 10
 curl -fsS "http://${DOMAIN}/health" || echo "⚠️ HTTP 健康检查暂未通过，继续尝试签发证书"

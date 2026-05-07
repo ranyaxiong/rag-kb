@@ -2,7 +2,7 @@ services:
   backend:
     
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../app:/app/app  # 挂载源代码，支持热重载
       - ../data:/app/data
@@ -16,7 +16,7 @@ services:
   frontend:
     
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     volumes:
       - ../frontend:/app  # 挂载源代码，支持热重载
     depends_on:

@@ -1,6 +1,7 @@
 """
 数据模型定义
 """
+import uuid
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
@@ -41,7 +42,7 @@ class QuestionRequest(BaseModel):
     """问答请求模型"""
     question: str = Field(..., min_length=1, max_length=2000, description="用户提问内容")
     max_sources: Optional[int] = Field(default=settings.max_sources,ge=settings.min_source_limit, le=settings.max_source_limit, description="返回的来源文档数量")
-    document_id: Optional[str] = None
+    document_id: Optional[str] = Field(default=None, min_length=1, max_length=128, description="文档ID")
 
     @field_validator("question")
     @classmethod
@@ -51,6 +52,26 @@ class QuestionRequest(BaseModel):
         if  len(v) > 2000:
             raise ValueError("question length can not exceed 2000 characters")
         return v.strip()
+
+    @field_validator("document_id")
+    @classmethod
+    def validate_document_id(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("document_id can not be empty")
+        # 检查控制字符
+        if any(ord(c) < 32 or ord(c)==127 for c in v):
+            raise ValueError("document_id can not contain control characters")
+        # 验证 UUID V4
+        try:
+            parsed_id = uuid.UUID(v)
+        except ValueError:
+            raise ValueError("document_id must be a valid UUID format")
+        if parsed_id.version != 4:
+            raise ValueError("document_id must be a valid version 4 UUID")    
+        return str(parsed_id)
 
 
 class SourceDocument(BaseModel):

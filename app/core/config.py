@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     # 应用基本配置
     app_name: str = "RAG Knowledge Base"
     app_version: str = "1.0.0"
-    debug: bool = True
-    
+    debug: bool = False
+    # 生产环境默认关闭 FastAPI 自动文档和 OpenAPI Schema
+    enable_api_docs: bool = False
+
     # LLM配置 - 支持多种模型提供商
     llm_provider: str = "openai"  # 支持: openai, deepseek, zhipu, etc.
     embedding_provider: str = "openai"  # 嵌入模型提供商，可以与LLM提供商不同
@@ -64,9 +66,9 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 50  # 最大文件上传大小（MB）
     
     # 服务器配置
-    backend_host: str = "0.0.0.0"
+    backend_host: str = "127.0.0.1"
     backend_port: int = 8000
-    frontend_host: str = "0.0.0.0"
+    frontend_host: str = "127.0.0.1"
     frontend_port: int = 8501
     
     # CORS配置
@@ -109,6 +111,10 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1     # 降低随机性提高缓存命中
     llm_max_tokens: int = 800        # 减少生成token数
     
+    # 并发保护配置
+    max_concurrent_llm_requests: int = 5   # LLM 调用最大并发数
+    max_concurrent_requests: int = 20      # 全局最大并发请求数
+
     # 配额限制配置
     enable_quota_limit: bool = True  # 是否启用配额限制
     default_daily_quota: int = 5     # 默认每日配额（未提供自定义API Key的用户）
@@ -163,20 +169,19 @@ class Settings(BaseSettings):
                 with open(self.api_key_file, 'r') as f:
                     key = f.read().strip()
                     if key:
-                        logger.info(f"API key loaded from file: {self.api_key_file}")
                         return key
             except Exception as e:
-                logger.warning(f"Failed to read API key from file {self.api_key_file}: {e}")
+                logger.warning(f"Failed to read API key from configured file")
+
         
         # 方式3: 从base64编码的环境变量
         if self.api_key_base64:
             try:
                 key = base64.b64decode(self.api_key_base64).decode('utf-8').strip()
                 if key:
-                    logger.info("API key loaded from base64 environment variable")
                     return key
             except Exception as e:
-                logger.warning(f"Failed to decode base64 API key: {e}")
+                logger.warning(f"Failed to decode base64 API key")
         
         # 向后兼容：方式4: 检查OpenAI特定配置
         if self.openai_api_key:
@@ -187,19 +192,17 @@ class Settings(BaseSettings):
                 with open(self.openai_api_key_file, 'r') as f:
                     key = f.read().strip()
                     if key:
-                        logger.info(f"API key loaded from OpenAI file: {self.openai_api_key_file}")
                         return key
             except Exception as e:
-                logger.warning(f"Failed to read OpenAI API key from file: {e}")
+                logger.warning(f"Failed to read OpenAI API key from configured file")
         
         if self.openai_api_key_base64:
             try:
                 key = base64.b64decode(self.openai_api_key_base64).decode('utf-8').strip()
                 if key:
-                    logger.info("API key loaded from OpenAI base64 environment variable")
                     return key
             except Exception as e:
-                logger.warning(f"Failed to decode OpenAI base64 API key: {e}")
+                logger.warning(f"Failed to decode configured OpenAI API key")
         
         # 方式5: 从Docker secrets
         secret_name = f"{self.llm_provider}_api_key" if self.llm_provider != "openai" else "openai_api_key"
@@ -209,10 +212,9 @@ class Settings(BaseSettings):
                 with open(docker_secret_path, 'r') as f:
                     key = f.read().strip()
                     if key:
-                        logger.info(f"API key loaded from Docker secret: {secret_name}")
                         return key
             except Exception as e:
-                logger.warning(f"Failed to read Docker secret {secret_name}: {e}")
+                logger.warning(f"Failed to read API key from Docker secret")
         
         # 方式6: 从系统密钥环 (仅Linux/Mac)
         try:
@@ -222,14 +224,13 @@ class Settings(BaseSettings):
                 # 回退到openai密钥环配置
                 key = keyring.get_password("rag-kb", "openai_api_key")
             if key:
-                logger.info(f"API key loaded from system keyring for {self.llm_provider}")
                 return key
         except ImportError:
             pass
         except Exception as e:
-            logger.warning(f"Failed to get API key from keyring: {e}")
+            logger.warning(f"Failed to get API key from system keyring")
         
-        logger.warning(f"No valid API key found for {self.llm_provider} in any source")
+        logger.warning(f"No valid API key configured")
         return None
     
     def get_openai_api_key(self) -> Optional[str]:
@@ -312,19 +313,17 @@ class Settings(BaseSettings):
                 with open(self.embedding_api_key_file, 'r') as f:
                     key = f.read().strip()
                     if key:
-                        logger.info(f"Embedding API key loaded from file: {self.embedding_api_key_file}")
                         return key
             except Exception as e:
-                logger.warning(f"Failed to read embedding API key from file {self.embedding_api_key_file}: {e}")
+                logger.warning(f"Failed to read embedding API key from configured file")
         # 3) 从base64
         if self.embedding_api_key_base64:
             try:
                 key = base64.b64decode(self.embedding_api_key_base64).decode('utf-8').strip()
                 if key:
-                    logger.info("Embedding API key loaded from base64 environment variable")
                     return key
             except Exception as e:
-                logger.warning(f"Failed to decode base64 embedding API key: {e}")
+                logger.warning(f"Failed to decode configured embedding API key")
         # 4) 提供商专用（zhipu 兼容旧行为）
         if self.embedding_provider == "zhipu" and self.zhipu_api_key:
             return self.zhipu_api_key

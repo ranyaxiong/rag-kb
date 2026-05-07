@@ -201,7 +201,7 @@ class ChatInterface:
     def _validate_question(self, question: str) -> Optional[str]:
         """验证问题长度"""
         normalized_question = question.strip()
-        if not normalized:
+        if not normalized_question:
             st.warning("⚠️ 请输入有效的问题")
             return None
         if len(normalized_question) > MAX_QUESTION_LENGTH:
@@ -212,8 +212,8 @@ class ChatInterface:
     def _process_question(self, question: str):
         """处理用户问题"""
         
-        question = self._validate_question(question)
-        if  question is None:
+        validated_question = self._validate_question(question)
+        if  validated_question is None:
             return
 
         st.session_state.messages.append({
@@ -224,7 +224,7 @@ class ChatInterface:
                 
         # 显示用户消息
         with st.chat_message("user"):
-            st.write(question)
+            st.write(validated_question)
         
         # 设置处理状态
         st.session_state.is_processing = True
@@ -244,7 +244,7 @@ class ChatInterface:
                                 if st.session_state.get("selected_doc_id") else None,
                                 payload
                             ))({
-                                "question": question,
+                                "question": validated_question,
                                 "max_sources": max_sources
                             })[1]
                         ),
@@ -368,8 +368,6 @@ class ChatInterface:
         headers = {}
         try:
             api_key = getattr(st.session_state, 'byok_api_key', '').strip()
-            # 添加调试输出
-            print(f"DEBUG - Chat interface API key: '{api_key}'")
             provider = getattr(st.session_state, 'byok_provider', '').strip()
             base_url = getattr(st.session_state, 'byok_base_url', '').strip()
             model = getattr(st.session_state, 'byok_model', '').strip()

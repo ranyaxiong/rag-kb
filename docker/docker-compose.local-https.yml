@@ -7,7 +7,7 @@ services:
     expose:
       - "8000"
     ports:
-      - "5678:5678" # 调试端口
+      - "127.0.0.1:5678:5678" # 调试端口
     volumes:
       - ../app:/app/app
     env_file:
@@ -31,7 +31,7 @@ services:
     expose:
       - "8501"
     ports:
-      - "5679:5679"
+      - "127.0.0.1:5679:5679"
     volumes:
       - ../frontend:/app/frontend
     env_file:

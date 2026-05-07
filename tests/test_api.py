@@ -85,6 +85,18 @@ class TestHealthAPI:
         assert "app_name" in data
         assert "version" in data
         assert "chunk_size" in data
+        assert "debug" not in data
+
+
+    def test_api_docs_disabled_in_current_app(self):
+        """测试当前应用默认关闭 Swagger/ReDoc/OpenAPI 文档"""
+        assert app.docs_url is None
+        assert app.redoc_url is None
+        assert app.openapi_url is None
+
+        assert client.get("/docs").status_code == 404
+        assert client.get("/redoc").status_code == 404
+        assert client.get("/openapi.json").status_code == 404
 
 
 class TestDocumentAPI:
@@ -384,7 +396,7 @@ class TestQAAPI:
         assert response.status_code == 422
         data = response.json()
         assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
-    
+
     def test_ask_question_max_sources_too_large(self):
         request_data = {"question": "测试问题", "max_sources": 6}
         response = client.post("/api/qa/ask", json=request_data)
@@ -400,7 +412,7 @@ class TestQAAPI:
         assert response.status_code == 422
         data = response.json()
         assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
-    
+
     @patch('app.api.qa.vector_store')
     @patch('app.api.qa.qa_engine')
     def test_ask_question_default_max_sources(self, mock_qa_engine, mock_vector_store):
@@ -425,7 +437,7 @@ class TestQAAPI:
         assert response.status_code == 422
         data = response.json()
         assert any("max_sources" in str(item.get("loc", "")) for item in data["detail"])
-    
+
     @patch('app.api.qa.qa_engine')
     def test_search_documents(self, mock_qa_engine):
         """测试文档检索"""

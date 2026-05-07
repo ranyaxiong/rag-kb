@@ -69,6 +69,8 @@ class TestSettings:
         assert settings.chunk_overlap == 200
         assert settings.max_sources == 3
         assert settings.similarity_threshold == 1.5
+        assert settings.debug is False
+        assert settings.enable_api_docs is False
 
         # 验证目录创建
         assert os.path.exists(upload_dir)
@@ -627,7 +629,8 @@ class TestSettingsIntegration:
             'CHAT_MODEL': 'glm-4-test',
             'CHUNK_SIZE': '2000',
             'MAX_SOURCES': '5',
-            'DEBUG': 'false'
+            'DEBUG': 'false',
+            'ENABLE_API_DOCS': 'true'
         }
 
         with patch.dict(os.environ, env_vars):
@@ -642,6 +645,7 @@ class TestSettingsIntegration:
             assert settings.chunk_size == 2000
             assert settings.max_sources == 5
             assert settings.debug is False
+            assert settings.enable_api_docs is True
 
     def test_multiple_api_key_sources_priority(self, temp_dirs):
         """测试多个API key源的优先级"""

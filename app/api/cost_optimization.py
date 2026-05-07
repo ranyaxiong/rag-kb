@@ -3,15 +3,16 @@
 """
 import logging
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
 
+from app.api.auth import require_admin
 from app.core.cache_manager import cache_manager
 from app.core.vector_store import VectorStore
 from app.models.schemas import ApiResponse
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/cost", tags=["cost-optimization"])
+router = APIRouter(tags=["cost-optimization"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/cache/stats", response_model=Dict[str, Any])

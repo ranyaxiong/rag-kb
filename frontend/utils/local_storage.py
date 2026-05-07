@@ -3,6 +3,7 @@
 使用Streamlit的组件机制实现浏览器localStorage功能
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 from typing import Any, Optional
 
@@ -27,7 +28,7 @@ def save_to_local_storage(key: str, value: Any) -> None:
         """
         
         # 执行JavaScript代码
-        st.components.v1.html(js_code, height=0, width=0)
+        components.html(js_code, height=0, width=0)
         
     except Exception as e:
         st.error(f"保存到本地存储失败: {str(e)}")
@@ -66,7 +67,7 @@ def load_from_local_storage(key: str, default_value: Any = None) -> Any:
         """
         
         # 显示HTML组件
-        component_value = st.components.v1.html(js_code, height=0, width=0)
+        component_value = components.html(js_code, height=0, width=0)
         
         # 使用session_state作为fallback
         if storage_key not in st.session_state:
@@ -108,7 +109,7 @@ def initialize_local_storage_values(keys_defaults: dict) -> dict:
     """
     
     # 执行JavaScript
-    st.components.v1.html(js_code, height=0, width=0)
+    components.html(js_code, height=0, width=0)
     
     # 从session_state获取或使用默认值
     for key, default_value in keys_defaults.items():
@@ -187,7 +188,7 @@ class BrowserLocalStorage:
         </script>
         """
         
-        st.components.v1.html(js_code, height=0, width=0)
+        components.html(js_code, height=0, width=0)
     
     @staticmethod 
     def save_to_browser(key: str, value: Any) -> None:
@@ -197,12 +198,12 @@ class BrowserLocalStorage:
         js_code = f"""
         <script>
         try {{
-            localStorage.setItem('{key}', {json.dumps(json_value)});
-            console.log('Saved to localStorage:', '{key}', {json.dumps(json_value)});
+            localStorage.setItem({json.dumps(key)}, {json.dumps(json_value)});
+            
         }} catch(e) {{
-            console.error('Failed to save to localStorage:', e);
+            console.error('Failed to save to localStorage');
         }}
         </script>
         """
         
-        st.components.v1.html(js_code, height=0, width=0)
+        components.html(js_code, height=0, width=0)

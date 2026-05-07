@@ -114,7 +114,7 @@ case $choice in
         
         # 启动后端服务（后台）
         echo "🚀 启动后端服务..."
-        nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload > logs/backend.log 2>&1 &
+        nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload > logs/backend.log 2>&1 &
         BACKEND_PID=$!
         echo $BACKEND_PID > backend.pid
         
@@ -133,8 +133,8 @@ case $choice in
         
         # 启动前端服务
         echo "🎨 启动前端服务..."
-        export BACKEND_URL=http://localhost:8000
-        streamlit run frontend/streamlit_app.py --server.port 8501
+        export BACKEND_URL=http://127.0.0.1:8000
+        streamlit run frontend/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
         ;;
         
     2)
@@ -162,9 +162,9 @@ case $choice in
         docker-compose ps
         
         echo "✅ Docker服务启动完成"
-        echo "🌐 前端地址: http://localhost:8501"
-        echo "🔗 后端API: http://localhost:8000"
-        echo "📚 API文档: http://localhost:8000/docs"
+        echo "⚠️  标准 Docker 配置不会向宿主机发布 8000/8501。"
+        echo "✅ 如需生产访问，请使用 Nginx 生产部署，只开放 80/443。"
+        echo "✅ 如需本地开发访问，请使用 Docker 开发模式，端口仅绑定 127.0.0.1。"
         ;;
         
     3)

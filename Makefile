@@ -79,22 +79,26 @@ check-security: ## 检查安全配置
 	@echo "$(YELLOW)🔍 检查安全配置...$(NC)"
 	@python -c "from app.core.config import settings; key=settings.get_openai_api_key(); print('✅ API Key已配置' if key else '❌ API Key未配置')"
 
+check-public-ports: ## 检查8000/8501端口是否被公网发布
+  @echo "$(YELLOW)🔍 检查8000/8501端口是否被公网发布...$(NC)"
+  @bash scripts/check-ports.sh
+  
 dev: ## 启动本地开发模式
 	@echo "$(YELLOW)🔧 启动本地开发模式...$(NC)"
 	@make env
 	@echo "$(YELLOW)🚀 启动后端服务...$(NC)"
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 &
+	uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 &
 	@echo "$(YELLOW)⏳ 等待后端启动...$(NC)"
 	@sleep 5
 	@echo "$(YELLOW)🎨 启动前端服务...$(NC)"
-	BACKEND_URL=http://localhost:8000 streamlit run frontend/streamlit_app.py --server.port 8501
+	BACKEND_URL=http://127.0.0.1:8000 streamlit run frontend/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 
 run: ## 启动生产模式
 	@echo "$(YELLOW)🚀 启动生产模式...$(NC)"
 	@make env
-	uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+	uvicorn app.main:app --host 127.0.0.1 --port 8000 &
 	@sleep 5
-	BACKEND_URL=http://localhost:8000 streamlit run frontend/streamlit_app.py --server.port 8501
+	BACKEND_URL=http://127.0.0.1:8000 streamlit run frontend/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 
 stop: ## 停止本地服务
 	@echo "$(YELLOW)🛑 停止服务...$(NC)"
@@ -116,8 +120,9 @@ docker-run: ## 启动Docker服务
 	@make env
 	cd docker && docker-compose up -d
 	@echo "$(GREEN)✅ Docker服务启动完成$(NC)"
-	@echo "$(BLUE)🌐 前端地址: http://localhost:8501$(NC)"
-	@echo "$(BLUE)🔗 后端API: http://localhost:8000$(NC)"
+	@echo "$(YELLOW)⚠️  当前标准 Docker 配置不会向宿主机发布 8000/8501。$(NC)"
+	@echo "$(BLUE)如需生产访问，请使用 Nginx 生产配置，仅开放 80/443。$(NC)"
+	@echo "$(BLUE)如需本地开发访问，请使用: make docker-dev$(NC)"
 
 docker-dev: ## 启动Docker开发模式
 	@echo "$(YELLOW)🐳 启动Docker开发模式...$(NC)"
