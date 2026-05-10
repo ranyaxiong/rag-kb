@@ -1,0 +1,81 @@
+# Production Environment Configuration
+# Supports multiple SSL certificate strategies
+# This template is tracked in git; the actual docker-compose.production.yml is gitignored.
+# On the server, run: cp docker-compose.production.yml.template docker-compose.production.yml
+
+services:
+  backend:
+    # 生产环境，只允许通过docker网络被nginx、frontend访问
+    networks:
+      - rag_network
+    volumes:
+      
+      # Production secrets (if using Docker secrets)
+      - ../secrets:/run/secrets:ro
+    
+    env_file:
+      - ../.env.production
+    
+
+  frontend:
+    networks:
+      - rag_network
+    env_file:
+      - ../.env.production
+    
+
+  nginx:
+    image: nginx:alpine
+    container_name: rag-kb-nginx-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Nginx configuration (use production config)
+      # - ./nginx/conf.d/production.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/conf.d/production-init.conf:/etc/nginx/conf.d/default.conf:ro
+      # SSL Certificates
+      # OPTION 1: Let's Encrypt
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+      
+      # OPTION 2: Cloud Provider Certificates
+      # - ./nginx/certs:/etc/nginx/certs:ro
+      
+      # Nginx logs
+      - ../logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - rag_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # OPTIONAL: Certbot for Let's Encrypt (if using Option 1)
+  # Uncomment if you're using Let's Encrypt for SSL certificates
+  # certbot:
+  #   image: certbot/certbot
+  #   volumes:
+  #     - ./certbot/conf:/etc/letsencrypt
+  #     - ./certbot/www:/var/www/certbot
+  #   entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+  #   networks:
+  #     - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
+
+volumes:
+  app_data:
+    driver: local

@@ -24,10 +24,10 @@ setx OPENAI_API_KEY "your-api-key-here"
 
 ```bash
 # 创建密钥文件
-echo "your-api-key-here" > secrets/openai_api_key.txt
+echo "your-api-key-here" > secrets/openai_api_key
 
 # 设置环境变量指向文件
-export OPENAI_API_KEY_FILE="./secrets/openai_api_key.txt"
+export OPENAI_API_KEY_FILE="./secrets/openai_api_key"
 ```
 
 ### 3. Base64编码环境变量
@@ -86,15 +86,15 @@ export OPENAI_API_KEY="sk-your-key"
 ./scripts/start.sh
 
 # 方式2: 密钥文件
-echo "sk-your-key" > secrets/openai_api_key.txt
-export OPENAI_API_KEY_FILE="./secrets/openai_api_key.txt"
+echo "sk-your-key" > secrets/openai_api_key
+export OPENAI_API_KEY_FILE="./secrets/openai_api_key"
 ./scripts/start.sh
 ```
 
 ### 生产环境
 ```bash
 # 使用Docker secrets
-echo "sk-your-key" > secrets/openai_api_key.txt
+echo "sk-your-key" > secrets/openai_api_key
 docker-compose -f docker/docker-compose.secrets.yml up -d
 ```
 

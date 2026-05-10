@@ -14,9 +14,6 @@ services:
       - ../data:/app/data
       - ../logs:/app/logs
     environment:
-      # API密钥配置
-      - API_KEY=${API_KEY:-${OPENAI_API_KEY}}
-      
       # 存储配置
       - CHROMA_DB_PATH=/app/data/chroma_db
       - UPLOAD_DIR=/app/data/uploads

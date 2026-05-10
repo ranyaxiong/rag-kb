@@ -17,6 +17,8 @@ venv.bak/
 .env.production
 .env.dev
 .env.local-https
+.env.public-sim
+
 
 # Data directories
 data/uploads/*
@@ -54,10 +56,11 @@ dist/
 *.egg-info/
 
 # Docker
-.dockerignorevscode-file://vscode-app/c:/Users/ryx-9/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/code/electron-browser/workbench/workbench.html
+.dockerignore
 docker/docker-compose.secrets.yml
 docker/docker-compose.production.yml
 docker/nginx/conf.d/production.conf
+docker/nginx/conf.d/production-init.conf
 # md
 ADMIN_BUTTON_TEST_REPORT.md
 STREAMLIT_VERSION_VERIFICATION.md
@@ -65,3 +68,9 @@ WARP.md
 
 # pem
 *.pem
+
+# Certbot / Let's Encrypt
+docker/certbot/conf/*
+docker/certbot/www/*
+!docker/certbot/conf/.gitkeep
+!docker/certbot/www/.gitkeep

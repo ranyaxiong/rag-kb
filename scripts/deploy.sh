@@ -46,11 +46,19 @@ cd "$APP_DIR"
 
 mkdir -p data/uploads data/chroma_db logs/nginx docker/certbot/conf docker/certbot/www secrets
 
+# Generate .env.production from template (the actual file is gitignored)
 if [ ! -f .env.production ]; then
-  echo "❌ 未找到 .env.production，请先确认仓库包含该文件"
-  exit 1
+  if [ -f .env.production.template ]; then
+    cp .env.production.template .env.production
+    echo "✅ 已从 .env.production.template 创建 .env.production"
+  else
+    echo "❌ 未找到 .env.production.template"
+    exit 1
+  fi
 fi
 cp .env.production ".env.production.bak.$(date +%F-%H%M%S)"
+sed -i "s|https://yourdomain.com|https://${DOMAIN}|g" .env.production
+sed -i "s|https://www.yourdomain.com|https://www.${DOMAIN}|g" .env.production
 sed -i "s|^BACKEND_URL_CLIENT=.*|BACKEND_URL_CLIENT=https://${DOMAIN}|g" .env.production
 sed -i "s|^ALLOWED_ORIGINS=.*|ALLOWED_ORIGINS=https://${DOMAIN},https://www.${DOMAIN}|g" .env.production
 sed -i "s|^DEBUG=.*|DEBUG=False|g" .env.production
@@ -58,6 +66,18 @@ sed -i "s|^DEBUG=.*|DEBUG=False|g" .env.production
 echo "✅ 已更新 .env.production"
 grep -E 'BACKEND_URL_CLIENT|ALLOWED_ORIGINS|DEBUG' .env.production || true
 
+# Generate docker-compose.production.yml from template (the actual file is gitignored)
+if [ ! -f docker/docker-compose.production.yml ]; then
+  if [ -f docker/docker-compose.production.yml.template ]; then
+    cp docker/docker-compose.production.yml.template docker/docker-compose.production.yml
+    echo "✅ 已从 docker-compose.production.yml.template 创建 docker-compose.production.yml"
+  else
+    echo "❌ 未找到 docker/docker-compose.production.yml.template"
+    exit 1
+  fi
+fi
+
+# Generate certbot override compose
 cat > docker/docker-compose.certbot.override.yml <<'EOF'
 services:
   certbot:
@@ -70,60 +90,9 @@ services:
       - rag_network
 EOF
 
-cat > docker/nginx/conf.d/production.conf <<EOF
-server {
-    listen 80;
-    server_name ${DOMAIN} www.${DOMAIN};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location /health {
-        proxy_pass http://backend:8000/health;
-        access_log off;
-    }
-
-    location /api/ {
-        proxy_pass http://backend:8000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        client_max_body_size 50M;
-    }
-
-    location /ws/ {
-        proxy_pass http://backend:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 86400;
-        proxy_send_timeout 86400;
-    }
-
-    location / {
-        proxy_pass http://frontend:8501;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 86400;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 60;
-        proxy_buffering off;
-        proxy_cache off;
-        client_max_body_size 50M;
-    }
-}
-EOF
+# Initial phase: use production-init.conf (HTTP-only, already in repo)
+# This config allows certbot ACME challenge on port 80
+# No need to generate production.conf yet — it will be created after cert issuance
 
 export API_KEY
 
@@ -143,10 +112,15 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.production.
   -d "${DOMAIN}" -d "www.${DOMAIN}" \
   --email "${EMAIL}" --agree-tos --no-eff-email
 
+# Certificate issued successfully — switch from HTTP-only to full HTTPS config
 cp docker/nginx/conf.d/production.conf.template docker/nginx/conf.d/production.conf
 sed -i "s|\${DOMAIN}|${DOMAIN}|g" docker/nginx/conf.d/production.conf
 sed -i 's|# ssl_certificate /etc/letsencrypt|ssl_certificate /etc/letsencrypt|g' docker/nginx/conf.d/production.conf
+sed -i 's|# ssl_certificate_key /etc/letsencrypt|ssl_certificate_key /etc/letsencrypt|g' docker/nginx/conf.d/production.conf
 sed -i 's|# include /etc/letsencrypt|include /etc/letsencrypt|g' docker/nginx/conf.d/production.conf
+
+# Update docker-compose.production.yml to mount production.conf instead of production-init.conf
+sed -i 's|production-init.conf|production.conf|g' docker/docker-compose.production.yml
 
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.production.yml -f docker/docker-compose.certbot.override.yml restart nginx
 

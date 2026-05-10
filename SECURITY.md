@@ -62,11 +62,11 @@ docker-compose -f docker-compose.secrets.yml up -d
 
 ```bash
 # 创建密钥文件
-echo "your-api-key-here" > secrets/openai_api_key.txt
-chmod 600 secrets/openai_api_key.txt
+echo "your-api-key-here" > secrets/openai_api_key
+chmod 600 secrets/openai_api_key
 
 # 配置环境变量
-export OPENAI_API_KEY_FILE="./secrets/openai_api_key.txt"
+export OPENAI_API_KEY_FILE="./secrets/openai_api_key"
 ```
 
 ## 🚀 启动应用（安全方式）
@@ -79,7 +79,7 @@ export OPENAI_API_KEY="your-key"
 
 ### 方式2: 密钥文件
 ```bash
-export OPENAI_API_KEY_FILE="./secrets/openai_api_key.txt"
+export OPENAI_API_KEY_FILE="./secrets/openai_api_key"
 ./scripts/start.sh
 ```
 

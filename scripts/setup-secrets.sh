@@ -32,7 +32,7 @@ case $choice in
             exit 1
         fi
         
-        echo "$api_key" > secrets/openai_api_key.txt
+        echo "$api_key" > secrets/openai_api_key
         ;;
         
     2)
@@ -48,7 +48,7 @@ case $choice in
             exit 1
         fi
         
-        echo "$api_key" > secrets/openai_api_key.txt
+        echo "$api_key" > secrets/openai_api_key
         ;;
         
     3)
@@ -57,7 +57,7 @@ case $choice in
             exit 1
         fi
         
-        echo "$OPENAI_API_KEY" > secrets/openai_api_key.txt
+        echo "$OPENAI_API_KEY" > secrets/openai_api_key
         ;;
         
     *)
@@ -67,9 +67,9 @@ case $choice in
 esac
 
 # 设置文件权限
-chmod 600 secrets/openai_api_key.txt
+chmod 600 secrets/openai_api_key
 
-echo "✅ Docker Secret文件已创建: secrets/openai_api_key.txt"
+echo "✅ Docker Secret文件已创建: secrets/openai_api_key"
 echo "🔒 文件权限已设置为600 (仅所有者可读写)"
 echo ""
 echo "🐳 现在您可以使用Docker Secrets启动应用:"

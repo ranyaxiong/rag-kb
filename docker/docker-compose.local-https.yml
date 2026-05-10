@@ -54,7 +54,7 @@ services:
       - ../.env.local-https
     volumes:
       # Nginx configuration
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/conf.d/local-https.conf:/etc/nginx/conf.d/default.conf:ro
       # mkcert local certificates
       - ./nginx/certs:/etc/nginx/certs:ro
       # Nginx logs (optional, for debugging)
