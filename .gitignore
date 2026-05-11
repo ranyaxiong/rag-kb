@@ -18,7 +18,8 @@ venv.bak/
 .env.dev
 .env.local-https
 .env.public-sim
-
+.env.deepseek
+.env.zhipu
 
 # Data directories
 data/uploads/*
@@ -56,9 +57,9 @@ dist/
 *.egg-info/
 
 # Docker
-.dockerignore
 docker/docker-compose.secrets.yml
 docker/docker-compose.production.yml
+docker/docker-compose.certbot.override.yml
 docker/nginx/conf.d/production.conf
 docker/nginx/conf.d/production-init.conf
 # md

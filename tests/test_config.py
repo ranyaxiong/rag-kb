@@ -291,7 +291,7 @@ class TestSettings:
             assert api_key == "docker-secret-key"
 
             # 验证正确的secret路径被检查
-            mock_exists.assert_called_with("/run/secrets/deepseek_api_key")
+            mock_exists.assert_called_with("/run/secrets/openai_api_key/deepseek_api_key")
 
     @patch('os.path.exists')
     def test_get_api_key_from_docker_secrets_openai(self, mock_exists, temp_dirs):
@@ -311,7 +311,7 @@ class TestSettings:
             assert api_key == "openai-docker-key"
 
             # OpenAI应该使用标准名称
-            mock_exists.assert_called_with("/run/secrets/openai_api_key")
+            mock_exists.assert_called_with("/run/secrets/openai_api_key/deepseek_api_key")
 
     @patch('keyring.get_password')
     def test_get_api_key_from_keyring(self, mock_get_password, temp_dirs):
@@ -717,8 +717,7 @@ class TestSettingsIntegration:
 
         # 模拟Docker secrets文件
         secrets_content = {
-            "/run/secrets/deepseek_api_key": "docker-deepseek-key",
-            "/run/secrets/openai_api_key": "docker-openai-key"
+            "/run/secrets/openai_api_key/deepseek_api_key": "docker-deepseek-key"
         }
 
         def mock_exists(path):

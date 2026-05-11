@@ -205,8 +205,11 @@ class Settings(BaseSettings):
                 logger.warning(f"Failed to decode configured OpenAI API key")
         
         # 方式5: 从Docker secrets
-        secret_name = f"{self.llm_provider}_api_key" if self.llm_provider != "openai" else "openai_api_key"
-        docker_secret_path = f"/run/secrets/{secret_name}"
+        if self.llm_provider in {"openai", "deepseek"}:
+            docker_secret_path = "/run/secrets/openai_api_key/deepseek_api_key"
+        else:
+            secret_name = f"{self.llm_provider}_api_key"
+            docker_secret_path = f"/run/secrets/{secret_name}"
         if os.path.exists(docker_secret_path):
             try:
                 with open(docker_secret_path, 'r') as f:

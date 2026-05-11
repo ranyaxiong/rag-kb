@@ -1,0 +1,64 @@
+# Git and local metadata
+.git
+.gitignore
+.gitattributes
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.secure.example
+!.env.production.template
+
+# Secrets and credentials
+secrets/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# Runtime data and logs
+data/
+logs/
+*.log
+
+# Certbot / Let's Encrypt runtime state
+docker/certbot/conf/
+docker/certbot/www/
+
+# Generated production configs
+docker/docker-compose.production.yml
+docker/docker-compose.secrets.yml
+docker/docker-compose.certbot.override.yml
+docker/nginx/conf.d/production.conf
+docker/nginx/conf.d/production-init.conf
+
+# Local editor and OS files
+.vscode/
+.idea/
+.windsurf/
+.augment/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
