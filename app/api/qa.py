@@ -341,12 +341,13 @@ async def submit_feedback(
         if rating not in range(1, 6):
             raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
         
-        # 这里可以将反馈存储到数据库
-        # 目前只是记录日志
-        logger.info(f"User feedback received - Rating: {rating}, Question: {question[:100]}...")
-        
-        if feedback:
-            logger.info(f"Additional feedback: {feedback}")
+        logger.info(
+            "User feedback received - rating=%s, question_length=%s, answer_length=%s, has_feedback=%s",
+            rating,
+            len(question or ""),
+            len(answer or ""),
+            bool(feedback),
+        )
         
         return {
             "success": True,

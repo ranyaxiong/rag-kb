@@ -149,7 +149,6 @@ def _restore_from_url_params() -> bool:
         ):
             import base64
 
-            api_key_param = query_params.get('api_key')
             provider_param = query_params.get('provider', 'openai')
             base_url_param = query_params.get('base_url', '')
             model_param = query_params.get('model', 'gpt-3.5-turbo')
@@ -165,12 +164,10 @@ def _restore_from_url_params() -> bool:
                 except Exception:
                     return raw_value or fallback
 
-            api_key = _decode_param(api_key_param)
             provider = provider_param if isinstance(provider_param, str) else provider_param[0]
             base_url = _decode_param(base_url_param)
             model = model_param if isinstance(model_param, str) else model_param[0]
 
-            st.session_state.byok_api_key = api_key.strip()
             st.session_state.byok_provider = (provider or 'openai').strip()
             st.session_state.byok_base_url = base_url.strip()
             st.session_state.byok_model = (model or 'gpt-3.5-turbo').strip()
@@ -179,9 +176,8 @@ def _restore_from_url_params() -> bool:
             st.session_state.settings_attempts = 0
 
             logger.info(
-                "BYOK settings restored from query params: provider=%s, api_key_exists=%s",
-                st.session_state.byok_provider,
-                bool(api_key)
+                "BYOK settings restored from query params: provider=%s",
+                st.session_state.byok_provider
             )
 
             clear_params()
