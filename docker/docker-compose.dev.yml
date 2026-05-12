@@ -19,7 +19,7 @@ services:
     ports:
       - "127.0.0.1:8501:8501"
     volumes:
-      - ../frontend:/app  # 挂载源代码，支持热重载
+      - ../frontend:/app/frontend  # 挂载源代码，支持热重载
     depends_on:
       - backend
     environment:
