@@ -126,10 +126,17 @@ def get_quota_stats():
 
 def render_admin_doc_management(admin_headers: dict):
     """管理员专属：文档列表 + 删除/聚焦操作（折叠在主区底部）。"""
-    with st.expander("🗂️ 管理：文档库 / 删除 / 限定检索", expanded=False):
-        col_a, col_b = st.columns([5, 1])
+    with st.expander("🗂️ 管理：文档库 / 删除 / 限定检索", expanded=True):
+        col_a, col_b, col_c = st.columns([5, 1, 1])
         with col_b:
             if st.button("🔄 刷新", key="admin_refresh_docs", use_container_width=True):
+                st.rerun()
+        with col_c:
+            if st.button("🚪 退出登录", key="admin_logout", use_container_width=True):
+                if st.session_state.get("admin_jwt"):
+                    del st.session_state["admin_jwt"]
+                st.success("已退出登录")
+                time.sleep(0.5)
                 st.rerun()
         try:
             docs_response = requests.get(
@@ -159,19 +166,41 @@ def render_admin_doc_management(admin_headers: dict):
                                 time.sleep(0.6)
                                 st.rerun()
                         with c2:
-                            if st.button("🗑️ 删除", key=f"delete_{doc['id']}", use_container_width=True):
-                                delete_response = requests.delete(
-                                    f"{BACKEND}/api/documents/{doc['id']}",
-                                    headers=admin_headers,
-                                )
-                                if delete_response.status_code == 200:
-                                    st.success("已删除")
-                                    time.sleep(0.6)
+                            # 检查是否正在确认删除此文档
+                            if st.session_state.get(f"pending_delete_{doc['id']}", False):
+                                col_confirm, col_cancel = st.columns([1, 1])
+                                with col_confirm:
+                                    if st.button("✅ 确认删除", key=f"confirm_{doc['id']}", use_container_width=True, type="primary"):
+                                        delete_response = requests.delete(
+                                            f"{BACKEND}/api/documents/{doc['id']}",
+                                            headers=admin_headers,
+                                        )
+                                        if delete_response.status_code == 200:
+                                            result = delete_response.json()
+                                            if result.get("details", {}).get("file_deleted"):
+                                                st.success("已删除（向量数据和物理文件）")
+                                            elif result.get("details", {}).get("error"):
+                                                st.warning(f"已删除向量数据，但文件删除失败: {result['details']['error']}")
+                                            else:
+                                                st.success("已删除（仅向量数据）")
+                                            # 清除确认状态
+                                            st.session_state[f"pending_delete_{doc['id']}"] = False
+                                            time.sleep(0.6)
+                                            st.rerun()
+                                        elif delete_response.status_code in (401, 403):
+                                            st.error("登录已失效，请重新登录")
+                                        else:
+                                            st.error("删除失败")
+                                with col_cancel:
+                                    if st.button("❌ 取消", key=f"cancel_{doc['id']}", use_container_width=True):
+                                        st.session_state[f"pending_delete_{doc['id']}"] = False
+                                        st.rerun()
+                            else:
+                                if st.button("🗑️ 删除", key=f"delete_{doc['id']}", use_container_width=True):
+                                    # 设置确认状态
+                                    st.session_state[f"pending_delete_{doc['id']}"] = True
+                                    st.warning(f"⚠️ 确认要删除文档「{doc['filename']}」吗？此操作将同时删除向量数据和物理文件。")
                                     st.rerun()
-                                elif delete_response.status_code in (401, 403):
-                                    st.error("登录已失效，请重新登录")
-                                else:
-                                    st.error("删除失败")
             elif docs_response.status_code in (401, 403):
                 st.warning("管理员登录已失效")
             else:

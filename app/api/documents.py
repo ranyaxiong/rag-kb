@@ -460,17 +460,56 @@ async def get_document(document_id: str, _: dict = Depends(require_admin)):
 
 @router.delete("/{document_id}")
 async def delete_document(document_id: str, _: dict = Depends(require_admin)):
-    """删除文档"""
+    """删除文档（包括向量数据和物理文件）"""
     try:
-        # 从向量存储中删除
-        success = get_vector_store().delete_document_by_id(document_id)
-        
-        if not success:
+        # 先获取文档摘要信息（包含文件路径）
+        doc_summary = get_vector_store().get_summary_by_document_id(document_id)
+        if not doc_summary:
             raise HTTPException(status_code=404, detail="Document not found")
+
+        file_path = doc_summary.get("file_path")
+        filename = doc_summary.get("filename", "unknown")
+
+        # 从向量存储中删除
+        vectors_deleted = get_vector_store().delete_document_by_id(document_id)
+        
+        if not vectors_deleted:
+            raise HTTPException(status_code=404, detail="Document not found in vector store")
+        
+        # 删除物理文件
+        file_deleted = False
+        file_error = None
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                file_deleted = True
+                logger.info(f"Deleted physical file: {file_path}")
+            except Exception as e:
+                file_error = str(e)
+                logger.error(f"Failed to delete file {file_path}: {file_error}")
+        elif file_path:
+            # 文件路径存在但文件不存在
+            logger.warning(f"File not found at path: {file_path}")
+            file_deleted = False
+            file_error = "File not found"
+        
+        # 构造返回消息
+        if file_deleted:
+            message = f"Document {filename} deleted successfully (vectors and file removed)"
+        elif file_error:
+            message = f"Document {filename} vectors deleted, but file removal failed: {file_error}"
+        else:
+            message = f"Document {filename} deleted successfully (vectors only, no file path)"
         
         return {
             "success": True,
-            "message": f"Document {document_id} deleted successfully"
+            "message": message,
+            "details": {
+                "vectors_deleted": vectors_deleted,
+                "file_deleted": file_deleted,
+                "file_path": file_path,
+                "error": file_error
+            }
         }
         
     except HTTPException:
