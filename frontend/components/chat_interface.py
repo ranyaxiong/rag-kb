@@ -33,23 +33,25 @@ class ChatInterface:
     
     def render(self):
         """渲染聊天界面"""
-        
-        # 聊天历史显示区域
-        self._render_chat_history()
-        
-        # 问题建议
-        self._render_suggestions()
-        
-        # 问题输入区域
+
+        has_messages = bool(st.session_state.messages)
+
+        if not has_messages:
+            # 欢迎卡片 + 建议问题（仅在尚未提问时显示）
+            self._render_welcome_and_suggestions()
+        else:
+            # 已有对话：渲染历史 + 顶部操作条
+            self._render_chat_history()
+            top_c1, top_c2 = st.columns([5, 1])
+            with top_c2:
+                if st.button("🗑️ 清空对话", key="clear_chat", use_container_width=True):
+                    st.session_state.messages = []
+                    if st.session_state.get("reset_scope_on_clear", True):
+                        st.session_state.selected_doc_id = None
+                    st.rerun()
+
+        # 输入区域 + 高级设置
         self._render_input_area()
-        
-        # 清空对话按钮
-        if st.session_state.messages and st.button("🗑️ 清空对话"):
-            st.session_state.messages = []
-            # 根据设置可选地重置检索范围
-            if st.session_state.get("reset_scope_on_clear", True):
-                st.session_state.selected_doc_id = None
-            st.rerun()
     
     def _render_chat_history(self):
         """渲染聊天历史"""
@@ -116,87 +118,158 @@ class ChatInterface:
 
                         st.markdown("<br>", unsafe_allow_html=True)
     
-    def _render_suggestions(self):
-        """渲染问题建议"""
+    def _fetch_suggestions(self):
+        """获取问题建议 + 文档数量。"""
         try:
             response = requests.get(f"{self.backend_url}/api/qa/suggestions", timeout=5)
             if response.status_code == 200:
-                data = response.json()
-                suggestions = data.get("suggestions", [])
-                doc_count = data.get("document_count", 0)
-                
-                if doc_count == 0:
-                    st.info("💡 请先在侧边栏上传一些文档，然后就可以开始提问了！")
-                else:
-                    st.write("💡 **建议问题:**")
-                    cols = st.columns(min(len(suggestions), 3))
-                    for i, suggestion in enumerate(suggestions[:3]):
-                        with cols[i % 3]:
-                            if st.button(suggestion, key=f"suggestion_{i}"):
-                                self._process_question(suggestion)
-                                
-        except Exception as e:
-            st.warning("无法获取问题建议")
-    
-    def _render_input_area(self):
-        """渲染输入区域"""
-        
-        # 检索范围选择（限定到指定文档可避免跨文档混入）
-        with st.expander("🔎 检索范围", expanded=False):
+                data = response.json() or {}
+                return data.get("suggestions", []), data.get("document_count", 0)
+        except Exception:
+            pass
+        return [], 0
+
+    def _render_welcome_and_suggestions(self):
+        """空对话状态：欢迎卡片 + 胶囊式示例问题。"""
+        suggestions, doc_count = self._fetch_suggestions()
+
+        if doc_count == 0:
+            # 空知识库：友好引导
+            st.markdown(
+                """
+                <div style="background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%);
+                            border:1px solid #fcd34d;border-radius:14px;padding:20px 22px;margin:8px 0 18px 0;">
+                  <div style="font-size:1.05rem;font-weight:600;color:#92400e;margin-bottom:6px;">
+                    📭 知识库目前是空的
+                  </div>
+                  <div style="font-size:13px;color:#78350f;line-height:1.6;">
+                    管理员还没有上传任何文档。如果你是访客，请稍后再来；如果你是管理员，请从侧边栏上传文档后开始体验。
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+
+        # 欢迎卡片
+        st.markdown(
+            f"""
+            <div style="background:linear-gradient(135deg,#eef2ff 0%,#f5f3ff 100%);
+                        border:1px solid #e0e7ff;border-radius:14px;padding:20px 22px;
+                        margin:8px 0 16px 0;">
+              <div style="font-size:1.1rem;font-weight:600;color:#312e81;margin-bottom:6px;">
+                👋 你好！我是基于 {doc_count} 个文档训练的智能助手
+              </div>
+              <div style="font-size:13px;color:#4338ca;line-height:1.6;">
+                左侧栏列出了当前可问答的文档范围。在下方输入框直接提问，或点击下面的建议快速开始。
+                每条回答都会附带文档出处，便于验证。
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # 胶囊式建议问题
+        if suggestions:
+            st.markdown(
+                "<div style='font-size:13px;color:#64748b;margin:4px 0 8px 2px;font-weight:500;'>💡 试试这些问题</div>",
+                unsafe_allow_html=True,
+            )
+            top = suggestions[:4]
+            cols = st.columns(len(top))
+            for i, suggestion in enumerate(top):
+                with cols[i]:
+                    if st.button(suggestion, key=f"suggestion_{i}", use_container_width=True):
+                        self._process_question(suggestion)
+
+    def _fetch_scope_docs(self) -> list:
+        """获取检索范围下拉数据：管理员使用完整列表（含 id），访客使用公开列表。"""
+        # 管理员：使用受限端点取得带 ID 的列表
+        if self.admin_token:
             try:
-                headers = {}
-                if self.admin_token:
-                    headers = {"Authorization": f"Bearer {self.admin_token}"}
-                resp = requests.get(f"{self.backend_url}/api/documents/", headers=headers)
-                options = ["全库（默认）"]
-                docs = []
+                headers = {"Authorization": f"Bearer {self.admin_token}"}
+                resp = requests.get(f"{self.backend_url}/api/documents/", headers=headers, timeout=5)
                 if resp.status_code == 200:
                     docs = resp.json() or []
-                    options += [f"{d['filename']} ({d['id'][:8]})" for d in docs]
-                idx = 0
-                if st.session_state.selected_doc_id:
-                    for i, d in enumerate(docs, start=1):
-                        if d.get('id') == st.session_state.selected_doc_id:
-                            idx = i
-                            break
-                choice = st.selectbox("限定检索范围到指定文档", options=options, index=idx, help="选择文档后，检索与生成仅基于该文档；选择全库则跨文档检索")
-                if choice == "全库（默认）":
-                    st.session_state.selected_doc_id = None
-                else:
-                    sel_index = options.index(choice) - 1
-                    if 0 <= sel_index < len(docs):
-                        st.session_state.selected_doc_id = docs[sel_index].get('id')
+                    return [{"id": d.get("id"), "filename": d.get("filename", "")} for d in docs]
             except Exception:
                 pass
+        # 访客：只能看到 filename（无法切换检索范围），返回空列表 -> 仅显示"全库"
+        try:
+            lib = st.session_state.get("_public_library") or {}
+            return [{"id": None, "filename": d.get("filename", "")} for d in (lib.get("documents") or [])]
+        except Exception:
+            return []
 
-        # 问题输入
-        st.caption(f"问题长度上限：{MAX_QUESTION_LENGTH} 字符")
+    def _render_input_area(self):
+        """渲染输入区域。"""
+
+        # 问题输入（主输入框，最显眼）
         user_question = st.chat_input(
-            "请输入您的问题...",
+            "在这里提问，例如：这个项目的技术栈是什么？",
             disabled=st.session_state.is_processing,
-            max_chars=MAX_QUESTION_LENGTH
+            max_chars=MAX_QUESTION_LENGTH,
         )
-        
+
         if user_question:
             self._process_question(user_question)
-        
-        # 高级设置
-        with st.expander("⚙️ 高级设置", expanded=False):
-            max_sources = st.slider(
-                "最大来源文档数量",
-                min_value=1,
-                max_value=MAX_SOURCES_LIMIT,
-                value=DEFAULT_MAX_SOURCES,
-                help="控制回答时参考的文档数量"
-            )
-            st.session_state.max_sources = max_sources
-            # 可配置：清空对话时重置检索范围
-            reset_scope = st.checkbox(
-                "清空对话时重置检索范围",
-                value=getattr(st.session_state, "reset_scope_on_clear", True),
-                help="开启后，点击“清空对话”将同时恢复为“全库（默认）”。"
-            )
-            st.session_state.reset_scope_on_clear = reset_scope
+
+        # 工具栏：检索范围 + 高级设置（默认折叠，单行排布）
+        toolbar_c1, toolbar_c2 = st.columns([1, 1])
+        with toolbar_c1:
+            with st.expander("🔎 检索范围", expanded=False):
+                docs = self._fetch_scope_docs()
+                has_ids = any(d.get("id") for d in docs)
+                if not has_ids:
+                    # 访客模式：只能浏览，不能切换
+                    st.caption("以下文档当前都参与检索：")
+                    for d in docs[:6]:
+                        st.caption(f"• {d['filename']}")
+                    if len(docs) > 6:
+                        st.caption(f"… 共 {len(docs)} 个文档")
+                    st.caption("（如需限定到单个文档，请联系管理员）")
+                else:
+                    options = ["全库（默认）"] + [
+                        f"{d['filename']} ({(d.get('id') or '')[:8]})" for d in docs
+                    ]
+                    idx = 0
+                    sel_id = st.session_state.selected_doc_id
+                    if sel_id:
+                        for i, d in enumerate(docs, start=1):
+                            if d.get("id") == sel_id:
+                                idx = i
+                                break
+                    choice = st.selectbox(
+                        "限定到指定文档",
+                        options=options,
+                        index=idx,
+                        label_visibility="collapsed",
+                        help="选择文档后，检索仅基于该文档；选择全库则跨文档检索。",
+                    )
+                    if choice == "全库（默认）":
+                        st.session_state.selected_doc_id = None
+                    else:
+                        sel_index = options.index(choice) - 1
+                        if 0 <= sel_index < len(docs):
+                            st.session_state.selected_doc_id = docs[sel_index].get("id")
+
+        with toolbar_c2:
+            with st.expander("⚙️ 高级设置", expanded=False):
+                max_sources = st.slider(
+                    "最大来源文档数量",
+                    min_value=1,
+                    max_value=MAX_SOURCES_LIMIT,
+                    value=DEFAULT_MAX_SOURCES,
+                    help="控制回答时参考的文档数量",
+                )
+                st.session_state.max_sources = max_sources
+                reset_scope = st.checkbox(
+                    "清空对话时重置检索范围",
+                    value=getattr(st.session_state, "reset_scope_on_clear", True),
+                )
+                st.session_state.reset_scope_on_clear = reset_scope
+
+        st.caption(f"问题长度上限：{MAX_QUESTION_LENGTH} 字符")
     
     def _validate_question(self, question: str) -> Optional[str]:
         """验证问题长度"""

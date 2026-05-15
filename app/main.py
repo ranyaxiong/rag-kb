@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.concurrency import ConcurrencyLimitMiddleware
 from app.api.documents import router as documents_router
@@ -16,6 +17,7 @@ from app.api.qa import router as qa_router
 from app.api.cost_optimization import router as cost_router
 from app.api.auth import router as auth_router
 from app.models.schemas import HealthCheck
+from app.core.rate_limiter import limiter
 
 
 # 配置日志
@@ -50,6 +52,8 @@ app = FastAPI(
     redoc_url="/redoc" if settings.enable_api_docs else None,
     openapi_url="/openapi.json" if settings.enable_api_docs else None,
 )
+
+limiter.app = app
 
 # 并发保护（注意：中间件后注册的先执行，所以并发限制放在 CORS 之后注册）
 app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=settings.max_concurrent_requests)

@@ -81,18 +81,22 @@ st.set_page_config(
 
 
 def add_floating_admin_button():
-    """添加右上角浮动的管理员登录按钮"""
+    """添加右上角浮动的管理员入口（低调样式）"""
     is_logged_in = st.session_state.get("admin_jwt") is not None
-    
-    # 根据登录状态决定按钮样式和文本
+
+    # 登录状态：醒目主题色；未登录：低对比度灰色描边按钮
     if is_logged_in:
-        bg_color = "linear-gradient(135deg, #11998e 0%, #38ef7d 100%)"
-        button_text = "✓ 管理员"
+        bg_color = "#10b981"
+        button_text = "✓"
         tooltip_text = "进入管理面板"
+        border = "2px solid rgba(16,185,129,0.25)"
+        color = "#ffffff"
     else:
-        bg_color = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
-        button_text = "🔐"
-        tooltip_text = "管理员登录"
+        bg_color = "#ffffff"
+        button_text = "⚙"
+        tooltip_text = "管理员入口"
+        border = "1px solid rgba(15,23,42,0.12)"
+        color = "#475569"
     
     button_html = f"""
     <style>
@@ -104,28 +108,32 @@ def add_floating_admin_button():
     /* 浮动按钮主体 */
     .floating-admin-btn {{
         position: fixed;
-        top: 70px;
-        right: 20px;
+        top: 18px;
+        right: 18px;
         z-index: 999999;
-        width: 56px;
-        height: 56px;
+        width: 40px;
+        height: 40px;
         border-radius: 50%;
         background: {bg_color};
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.12);
+        color: {color};
+        box-shadow: 0 1px 2px rgba(15,23,42,0.06);
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: all 0.2s ease;
         text-decoration: none;
-        font-size: 24px;
-        border: 2px solid rgba(255,255,255,0.3);
+        font-size: 18px;
+        font-weight: 600;
+        border: {border};
     }}
     
     /* 悬停效果 */
     .floating-admin-btn:hover {{
-        transform: translateY(-3px) scale(1.05);
-        box-shadow: 0 8px 20px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(15,23,42,0.12);
+        border-color: rgba(99,102,241,0.4);
+        color: #6366f1;
     }}
     
     /* 点击效果 */
@@ -137,8 +145,8 @@ def add_floating_admin_button():
     /* 提示文本 */
     .admin-tooltip {{
         position: fixed;
-        top: 80px;
-        right: 85px;
+        top: 26px;
+        right: 68px;
         background: rgba(38, 39, 48, 0.95);
         color: white;
         padding: 8px 14px;
@@ -175,14 +183,13 @@ def add_floating_admin_button():
     /* 登录状态指示器（小绿点） */
     .status-indicator {{
         position: absolute;
-        top: 4px;
-        right: 4px;
-        width: 12px;
-        height: 12px;
-        background: #4CAF50;
+        top: -2px;
+        right: -2px;
+        width: 10px;
+        height: 10px;
+        background: #10b981;
         border-radius: 50%;
         border: 2px solid white;
-        animation: pulse 2s infinite;
         display: {'block' if is_logged_in else 'none'};
     }}
     
@@ -200,11 +207,11 @@ def add_floating_admin_button():
     /* 响应式设计 */
     @media (max-width: 768px) {{
         .floating-admin-btn {{
-            width: 48px;
-            height: 48px;
-            top: 60px;
-            right: 15px;
-            font-size: 20px;
+            width: 36px;
+            height: 36px;
+            top: 14px;
+            right: 14px;
+            font-size: 16px;
         }}
         .admin-tooltip {{
             font-size: 12px;
@@ -395,41 +402,324 @@ def clear_user_settings():
 
 
 def display_quota_info():
+    """以进度条形式展示当日体验额度。"""
     try:
         if st.session_state.get("settings_status") == SettingsStatus.RESTORING.value:
-            st.info("正在从浏览器恢复设置…")
+            st.caption("正在从浏览器恢复设置…")
             return
 
         if st.session_state.get("byok_api_key"):
-            st.success("🔑 使用自定义 API Key - 不受试用配额限制")
+            st.markdown(
+                """
+                <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:10px 12px;">
+                  <div style="font-size:13px;color:#065f46;font-weight:600;">🔑 已接入自定义 API Key</div>
+                  <div style="font-size:12px;color:#047857;margin-top:2px;">不受试用配额限制</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             return
 
         response = requests.get(
             f"{BACKEND_URL_INTERNAL}/api/qa/quota",
-            headers=build_byok_headers()
+            headers=build_byok_headers(),
+            timeout=5,
         )
 
         if response.status_code != 200:
-            st.info("无法获取配额信息")
+            st.caption("无法获取配额信息")
             return
 
         quota_info = response.json()
 
         if not quota_info.get("quota_enabled", True):
-            st.info("当前未启用配额限制")
+            st.caption("当前未启用配额限制")
             return
 
-        used = quota_info.get("used_count", 0)
-        limit = quota_info.get("daily_limit", 0)
-        remaining = quota_info.get("remaining", 0)
-        message = quota_info.get("message")
+        used = int(quota_info.get("used_count", 0) or 0)
+        limit_raw = quota_info.get("daily_limit", 0)
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            limit = 0
+        remaining = max(limit - used, 0)
+        ratio = (used / limit) if limit > 0 else 0.0
 
-        st.write(f"今日已用：{used} / 限额：{limit}，剩余：{remaining}")
-        if message:
-            st.caption(message)
+        st.markdown(
+            f"""
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-size:13px;color:#475569;font-weight:600;">🎁 今日免费体验额度</span>
+                <span style="font-size:12px;color:#64748b;">{used} / {limit}</span>
+              </div>
+              <div style="margin-top:8px;height:6px;background:#e2e8f0;border-radius:999px;overflow:hidden;">
+                <div style="width:{min(ratio*100, 100):.1f}%;height:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);"></div>
+              </div>
+              <div style="margin-top:8px;font-size:12px;color:#64748b;">剩余 <b style="color:#6366f1;">{remaining}</b> 次 · 超额可在「⚙️ 高级」中接入自己的 Key</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     except Exception as e:
-        st.warning(f"配额信息获取错误: {str(e)}")
+        st.caption(f"配额信息获取错误: {str(e)}")
+
+
+def fetch_public_library() -> dict:
+    """获取只读知识库目录（无需登录）。失败时返回空结构。"""
+    try:
+        resp = requests.get(f"{BACKEND_URL_INTERNAL}/api/documents/library", timeout=5)
+        if resp.status_code == 200:
+            return resp.json() or {"documents": [], "total": 0}
+    except Exception:
+        pass
+    return {"documents": [], "total": 0}
+
+
+def inject_global_styles():
+    """注入全局样式：字体、强调色、卡片、聊天输入框美化等。"""
+    st.markdown(
+        """
+        <style>
+        /* 全局：去掉 Streamlit 顶部留白 */
+        .block-container { padding-top: 2rem; padding-bottom: 4rem; }
+        /* 标题：减小字重 */
+        h1, h2, h3 { letter-spacing: -0.01em; }
+        /* 主按钮色 */
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
+            border: none !important;
+        }
+        /* 通用按钮：圆角胶囊 */
+        .stButton > button {
+            border-radius: 999px;
+            border: 1px solid #e2e8f0;
+            background: #ffffff;
+            color: #334155;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        .stButton > button:hover {
+            border-color: #6366f1;
+            color: #6366f1;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99,102,241,0.08);
+        }
+        /* 聊天输入框 */
+        [data-testid="stChatInput"] > div {
+            border-radius: 16px !important;
+            border: 1.5px solid #e2e8f0 !important;
+            box-shadow: 0 1px 3px rgba(15,23,42,0.04) !important;
+        }
+        [data-testid="stChatInput"] > div:focus-within {
+            border-color: #6366f1 !important;
+            box-shadow: 0 0 0 4px rgba(99,102,241,0.08) !important;
+        }
+        /* 侧边栏整体 */
+        section[data-testid="stSidebar"] {
+            background: #fafbff;
+            border-right: 1px solid #eef0f7;
+        }
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 {
+            font-size: 0.95rem !important;
+            color: #475569 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-top: 0.5rem !important;
+        }
+        /* expander 默认更柔和 */
+        [data-testid="stExpander"] {
+            border-radius: 10px !important;
+            border: 1px solid #eef0f7 !important;
+            background: #ffffff !important;
+        }
+        /* hr 更轻 */
+        hr { border-color: #eef0f7 !important; margin: 1rem 0 !important; }
+        /* 隐藏 Streamlit 自带的右上汉堡菜单和"Deploy"按钮，保留更干净的首页 */
+        [data-testid="stHeader"] { background: transparent; }
+        /* 隐藏页脚 */
+        footer { visibility: hidden; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero():
+    """首页 hero：产品名 + 一句话价值主张 + 关于折叠卡片。"""
+    st.markdown(
+        """
+        <div style="margin-bottom: 4px;">
+          <h1 style="font-size: 1.9rem; margin-bottom: 4px; font-weight: 700;
+                     background: linear-gradient(90deg,#6366f1,#8b5cf6);
+                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            📚 知问 · 智能文档问答
+          </h1>
+          <div style="color:#64748b; font-size: 0.95rem; margin-bottom: 0.75rem;">
+            上传文档 · 精准检索 · AI 答疑 —— 一个轻量的 RAG 知识库 Demo
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_about_expander():
+    """关于项目的折叠介绍卡。"""
+    with st.expander("ℹ️ 关于这个项目（点击展开）", expanded=False):
+        st.markdown(
+            """
+            **知问** 是一个面向个人知识库场景的 RAG 应用 Demo，支持上传 PDF / Word / Markdown 等文档，
+            通过向量检索 + 大模型生成提供带出处的智能问答。
+
+            **技术栈**：FastAPI · Streamlit · ChromaDB · OpenAI-compatible LLM · Docker
+
+            **当前体验模式**：管理员（即作者）预置文档，访客无需登录即可直接提问。
+            如果你想突破免费配额，可在侧边栏「⚙️ 高级」中填写自己的 API Key。
+
+            > 这是一个持续迭代中的求职作品，欢迎交流反馈。
+            """
+        )
+
+
+def render_kb_preview(library: dict):
+    """侧边栏：当前知识库（只读预览）。"""
+    docs = library.get("documents", [])
+    total = library.get("total", 0)
+    st.markdown(
+        f"""
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+          <span style="font-size:13px;font-weight:600;color:#475569;">📂 当前知识库</span>
+          <span style="font-size:12px;color:#94a3b8;">{total} 个文档</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if not docs:
+        st.caption("知识库暂时为空，等待管理员上传…")
+        return
+    # 最多展示前 8 条；超出收进 expander
+    preview = docs[:8]
+    remaining = docs[8:]
+    icon_map = {"pdf": "📕", "md": "📝", "txt": "📄", "docx": "📘", "doc": "📘"}
+    lines_html = []
+    for d in preview:
+        ext = (d.get("file_type") or "").lower()
+        icon = icon_map.get(ext, "📄")
+        name = d.get("filename", "(unnamed)")
+        chunks = d.get("chunk_count", 0)
+        lines_html.append(
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"padding:6px 8px;border-radius:8px;font-size:13px;color:#334155;'>"
+            f"<span style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px;' title='{name}'>{icon} {name}</span>"
+            f"<span style='color:#94a3b8;font-size:11px;'>{chunks} 块</span>"
+            f"</div>"
+        )
+    st.markdown(
+        "<div style='background:#ffffff;border:1px solid #eef0f7;border-radius:10px;padding:4px;'>"
+        + "".join(lines_html)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    if remaining:
+        with st.expander(f"展开剩余 {len(remaining)} 个文档"):
+            for d in remaining:
+                ext = (d.get("file_type") or "").lower()
+                icon = icon_map.get(ext, "📄")
+                st.caption(f"{icon} {d.get('filename','(unnamed)')} · {d.get('chunk_count',0)} 块")
+
+
+def render_byok_advanced():
+    """高级设置：自定义 API Key（默认折叠）。"""
+    with st.expander("⚙️ 高级 · 使用自己的 API Key", expanded=False):
+        st.caption("配置将仅保存在你的浏览器本地，不会上传到服务器。")
+        with st.form("byok_form"):
+            api_key = st.text_input(
+                "API Key",
+                type="password",
+                value=st.session_state.byok_api_key,
+                placeholder="sk-...",
+            )
+
+            detected_provider = (
+                detect_provider_from_api_key(api_key) if api_key else st.session_state.byok_provider
+            )
+            provider_options = ["openai", "deepseek", "zhipu", "custom"]
+            current_provider = st.session_state.byok_provider
+
+            if api_key and detected_provider != current_provider:
+                st.info(f"💡 检测到可能是 **{detected_provider}** 的 Key")
+
+            provider = st.selectbox(
+                "提供商",
+                options=provider_options,
+                index=provider_options.index(current_provider),
+            )
+            base_url = st.text_input(
+                "Base URL（可选）",
+                value=st.session_state.byok_base_url,
+                placeholder="兼容 OpenAI 的网关地址",
+            )
+            model = st.text_input(
+                "模型（可选）",
+                value=st.session_state.byok_model,
+                placeholder="gpt-4o-mini / deepseek-chat / glm-4",
+            )
+
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                saved = st.form_submit_button(
+                    "💾 保存",
+                    on_click=lambda: st.session_state.__setitem__("skip_restore_once", True),
+                )
+            with col2:
+                auto_detect = st.form_submit_button(
+                    "🎯 自动检测",
+                    on_click=lambda: st.session_state.__setitem__("skip_restore_once", True),
+                )
+            with col3:
+                cleared = st.form_submit_button(
+                    "🗑️ 清除",
+                    on_click=lambda: st.session_state.__setitem__("skip_restore_once", True),
+                )
+
+            if auto_detect and api_key:
+                detected = detect_provider_from_api_key(api_key)
+                st.session_state.byok_api_key = api_key.strip()
+                st.session_state.byok_provider = detected
+                if detected == "deepseek":
+                    st.session_state.byok_base_url = "https://api.deepseek.com"
+                    st.session_state.byok_model = "deepseek-chat"
+                elif detected == "zhipu":
+                    st.session_state.byok_base_url = "https://open.bigmodel.cn/api/paas/v4"
+                    st.session_state.byok_model = "glm-4"
+                elif detected == "openai":
+                    st.session_state.byok_base_url = ""
+                    st.session_state.byok_model = "gpt-3.5-turbo"
+                save_user_settings()
+                st.session_state.settings_just_saved = True
+                st.success(f"✅ 已识别为 {detected}")
+                st.rerun()
+
+            if saved:
+                st.session_state.byok_api_key = api_key.strip()
+                st.session_state.byok_provider = provider.strip()
+                st.session_state.byok_base_url = base_url.strip()
+                st.session_state.byok_model = model.strip()
+                save_user_settings()
+                st.session_state.settings_just_saved = True
+                st.success("✅ 已保存到浏览器")
+
+            if cleared:
+                st.session_state.byok_api_key = ""
+                st.session_state.byok_provider = "openai"
+                st.session_state.byok_base_url = ""
+                st.session_state.byok_model = "gpt-3.5-turbo"
+                clear_user_settings()
+                st.session_state.settings_just_saved = True
+                st.session_state.just_cleared = True
+                st.success("🗑️ 已清除")
 
 
 def get_admin_auth_headers() -> dict:
@@ -440,279 +730,212 @@ def get_admin_auth_headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def render_admin_doc_management(admin_headers: dict):
+    """管理员专属：文档列表 + 删除/聚焦操作（折叠在主区底部）。"""
+    with st.expander("🗂️ 管理：文档库 / 删除 / 限定检索", expanded=False):
+        col_a, col_b = st.columns([5, 1])
+        with col_b:
+            if st.button("🔄 刷新", key="admin_refresh_docs", use_container_width=True):
+                st.rerun()
+        try:
+            docs_response = requests.get(
+                f"{BACKEND_URL_INTERNAL}/api/documents/",
+                headers=admin_headers,
+                timeout=10,
+            )
+            if docs_response.status_code == 200:
+                documents = docs_response.json() or []
+                if not documents:
+                    st.caption("暂无文档")
+                    return
+                for doc in documents:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**📄 {doc['filename']}**  \n"
+                            f"<span style='color:#94a3b8;font-size:12px;'>"
+                            f"{doc.get('file_type','')} · {doc.get('chunk_count','N/A')} 块 · "
+                            f"上传于 {str(doc.get('upload_time',''))[:19]}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        c1, c2 = st.columns([1, 1])
+                        with c1:
+                            if st.button("🎯 限定问答到此文档", key=f"focus_{doc['id']}", use_container_width=True):
+                                st.session_state.selected_doc_id = doc['id']
+                                st.success("已限定到该文档")
+                                time.sleep(0.6)
+                                st.rerun()
+                        with c2:
+                            if st.button("🗑️ 删除", key=f"delete_{doc['id']}", use_container_width=True):
+                                delete_response = requests.delete(
+                                    f"{BACKEND_URL_INTERNAL}/api/documents/{doc['id']}",
+                                    headers=admin_headers,
+                                )
+                                if delete_response.status_code == 200:
+                                    st.success("已删除")
+                                    time.sleep(0.6)
+                                    st.rerun()
+                                elif delete_response.status_code in (401, 403):
+                                    st.error("登录已失效，请重新登录")
+                                else:
+                                    st.error("删除失败")
+            elif docs_response.status_code in (401, 403):
+                st.warning("管理员登录已失效")
+            else:
+                st.error("获取文档列表失败")
+        except Exception as e:
+            st.error(f"文档列表获取错误: {str(e)}")
+
+
+def render_footer():
+    """页脚：版本 / 项目链接。"""
+    version = get_git_version_info_frontend()
+    st.markdown(
+        f"""
+        <div style="margin-top:36px;padding-top:16px;border-top:1px solid #eef0f7;
+                    display:flex;justify-content:space-between;color:#94a3b8;font-size:12px;">
+          <span>📚 知问 · RAG Demo</span>
+          <span>{version}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     """主应用函数"""
-    
+
+    # 注入全局样式（必须在所有 UI 之前）
+    inject_global_styles()
+
     # 添加右上角浮动管理员按钮
-    add_floating_admin_button()
+    # add_floating_admin_button()
 
     # --- WebSocket & Client ID Management ---
     if 'client_id' not in st.session_state:
         st.session_state.client_id = str(uuid.uuid4())
-        # Place a container at the top to initialize WS
         with st.container():
-             init_websocket_connection(st.session_state.client_id)
-
-    # 在页面启动时检查是否需要重置保存标志
-    # 使用一个简单的机制：如果用户刷新浏览器，session_state会清空
-    # 所以我们不需要手动重置settings_just_saved
+            init_websocket_connection(st.session_state.client_id)
 
     # 加载用户设置
     load_user_settings()
 
-    # 页面标题
-    st.title("📚 RAG知识库系统测试")
-    st.markdown("---")
-
     # 检查后端连接
     if not check_backend_connection():
-        st.error("⚠️ 后端服务连接失败，请确保API服务正在运行")
-        st.info(f"服务器端后端地址: {BACKEND_URL_INTERNAL}")
-        st.info(f"浏览器端后端地址: {BACKEND_URL_CLIENT}")
+        st.error("⚠️ 后端服务连接失败，请确保 API 服务正在运行")
+        st.caption(f"服务器端后端地址: {BACKEND_URL_INTERNAL}")
+        st.caption(f"浏览器端后端地址: {BACKEND_URL_CLIENT}")
         st.stop()
 
     admin_headers = get_admin_auth_headers()
     admin_logged_in = bool(admin_headers)
-    
-    # 侧边栏 - 模型与文档管理
+
+    # 提前获取一次公开知识库目录（供 hero 与 chat 共用）
+    library = fetch_public_library()
+    doc_count = library.get("total", 0)
+    st.session_state["_public_library"] = library  # ChatInterface 可读取
+
+    # ===== 侧边栏 =====
     with st.sidebar:
-        # 在侧边栏顶部显示版本信息
-        st.caption(get_git_version_info_frontend())
-
-        st.header("🔑 模型设置 (BYOK)")
-
-        api_key_configured = bool(st.session_state.get("byok_api_key"))
-        st.caption(f"API Key：{'已配置' if api_key_configured else '未配置'}")
-        
-        with st.form("byok_form"):
-            api_key = st.text_input("API Key", type="password", value=st.session_state.byok_api_key, help="设置将保存在浏览器本地，刷新页面不会丢失")
-
-            # Auto-detect provider based on API key format
-            detected_provider = detect_provider_from_api_key(api_key) if api_key else st.session_state.byok_provider
-            provider_options = ["openai", "deepseek", "zhipu", "custom"]
-            current_provider = st.session_state.byok_provider
-
-            # Show detected provider hint
-            if api_key and detected_provider != current_provider:
-
-                st.info(f"💡 检测到 API Key 格式，建议选择提供商: **{detected_provider}**")
-
-            provider = st.selectbox("提供商", options=provider_options, index=provider_options.index(current_provider))
-            base_url = st.text_input("Base URL (可选)", value=st.session_state.byok_base_url, placeholder="如自定义兼容 OpenAI 的网关地址")
-            model = st.text_input("模型 (可选)", value=st.session_state.byok_model, placeholder="如 gpt-4o-mini / deepseek-chat / glm-4")
-
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col1:
-                saved = st.form_submit_button("💾 保存设置", on_click=lambda: st.session_state.__setitem__('skip_restore_once', True))
-            with col2:
-                auto_detect = st.form_submit_button("🎯 自动检测", on_click=lambda: st.session_state.__setitem__('skip_restore_once', True))
-            with col3:
-                cleared = st.form_submit_button("🗑️ 清除设置", on_click=lambda: st.session_state.__setitem__('skip_restore_once', True))
-
-            if auto_detect and api_key:
-                # Auto-detect and apply provider settings
-                detected = detect_provider_from_api_key(api_key)
-                st.session_state.byok_api_key = api_key.strip()
-                st.session_state.byok_provider = detected
-                # Set appropriate defaults based on provider
-                if detected == "deepseek":
-                    st.session_state.byok_base_url = "https://api.deepseek.com"
-                    st.session_state.byok_model = "deepseek-chat"
-                elif detected == "zhipu":
-                    st.session_state.byok_base_url = "https://open.bigmodel.cn/api/paas/v4"
-                    st.session_state.byok_model = "glm-4"
-                elif detected == "openai":
-                    st.session_state.byok_base_url = ""
-                    st.session_state.byok_model = "gpt-3.5-turbo"
-
-                save_user_settings()
-                # 标记设置已保存，不需要重新加载
-                st.session_state.settings_just_saved = True
-                st.success(f"✅ 已自动检测并配置为 {detected} 提供商")
-                st.rerun()
-
-            if saved:
-                # 更新session_state
-                st.session_state.byok_api_key = api_key.strip()
-                st.session_state.byok_provider = provider.strip()
-                st.session_state.byok_base_url = base_url.strip()
-                st.session_state.byok_model = model.strip()
-
-                # 保存到localStorage
-                save_user_settings()
-                # 标记设置已保存，不需要重新加载
-                st.session_state.settings_just_saved = True
-                st.success("✅ 设置已保存到浏览器本地，刷新页面不会丢失")
-
-
-            if cleared:
-
-                # 清除session_state
-                st.session_state.byok_api_key = ""
-                st.session_state.byok_provider = "openai"
-                st.session_state.byok_base_url = ""
-                st.session_state.byok_model = "gpt-3.5-turbo"
-
-                # 清除localStorage
-                clear_user_settings()
-                # 标记设置已清除，使用当前session_state的默认值，并避免本轮/下一轮恢复
-                st.session_state.settings_just_saved = True
-                st.session_state.just_cleared = True
-                st.success("🗑️ 设置已清除")
-
-        st.markdown("---")
-
-        st.header("📄 文档管理")
+        st.markdown(
+            "<div style='padding:6px 0 14px 0;'>"
+            "<div style='font-size:1.05rem;font-weight:700;color:#0f172a;'>📚 知问</div>"
+            "<div style='font-size:11px;color:#94a3b8;letter-spacing:0.05em;'>RAG KNOWLEDGE BASE</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         if admin_logged_in:
-            # 文档上传组件
+            st.markdown(
+                "<div style='background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;"
+                "padding:6px 10px;font-size:12px;color:#065f46;margin-bottom:10px;'>"
+                "✓ 管理员模式</div>",
+                unsafe_allow_html=True,
+            )
+
+        # 1. 知识库预览
+        render_kb_preview(library)
+
+        st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+        # 2. 管理员上传
+        if admin_logged_in:
             file_upload_component = FileUploadComponent(
                 BACKEND_URL_INTERNAL,
                 BACKEND_URL_CLIENT,
                 st.session_state.get("admin_jwt"),
             )
             file_upload_component.render()
-        else:
-            st.info("文档上传、删除与统计仅管理员可用，请先点击右上角 🔐 登录。")
-    # --- Plan A: 原生轮询 + 智能降频（有任务时短周期自动重跑）---
-    # try:
-    #     StateManager.init_state()
-    #     processing_docs = list(StateManager.get_processing_documents())
-    #     if processing_docs:
-    #         # 轮询每个进行中的文档状态，完成即从列表移除
-    #         finished_ids: list[str] = []
-    #         for _doc_id in list(processing_docs):
-    #             try:
-    #                 resp = requests.get(
-    #                     f"{BACKEND_URL_INTERNAL}/api/documents/status/{_doc_id}", timeout=4
-    #                 )
-    #                 if resp.status_code == 200:
-    #                     data = resp.json() or {}
-    #                     status = data.get("status")
-    #                     # 将取消相关状态也视为已结束，以避免页面反复刷新造成闪烁
-    #                     if status in ("completed", "failed", "timeout", "cancelled", "cancelling", "not found"):
-    #                         StateManager.remove_processing_document(_doc_id)
-    #                 elif resp.status_code == 404:  
-    #                     StateManager.remove_processing_document(_doc_id)
-    #                 else:
-    #                     # 其他错误，忽略
-    #                     pass
-    #             except Exception:
-    #                 # 网络错误时忽略，下一轮再查
-    #                 pass
 
-    #         remaining = len(StateManager.get_processing_documents())
-    #         # 只有仍有真正进行中的任务时才短周期刷新，避免取消后闪烁
-    #         if remaining > 0:
-    #             st.caption(f"🔄 正在处理 {remaining} 个文档… 页面将自动更新。")
-    #             time.sleep(2)  # 轻量降频：2s/次
-    #             st.rerun()
-    # except Exception:
-    #     pass
+            # 文档统计
+            with st.expander("📊 文档统计", expanded=False):
+                try:
+                    stats_response = requests.get(
+                        f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview",
+                        headers=admin_headers,
+                        timeout=5,
+                    )
+                    if stats_response.status_code == 200:
+                        stats = stats_response.json()
+                        cc1, cc2 = st.columns(2)
+                        with cc1:
+                            st.metric("文档数", stats.get("total_documents", 0))
+                        with cc2:
+                            st.metric("块数", stats.get("total_chunks", 0))
+                    elif stats_response.status_code in (401, 403):
+                        st.caption("登录已失效")
+                    else:
+                        st.caption("获取统计失败")
+                except Exception as e:
+                    st.caption(f"统计错误: {e}")
 
-
-
-        st.markdown("---")
-        st.subheader("📊 统计信息")
-        if admin_logged_in:
-            try:
-                stats_response = requests.get(
-                    f"{BACKEND_URL_INTERNAL}/api/documents/stats/overview",
-                    headers=admin_headers,
-                    timeout = 5
-                )
-                if stats_response.status_code == 200:
-                    stats = stats_response.json()
-                    st.metric("总文档数", stats.get("total_documents", 0))
-                    st.metric("总块数", stats.get("total_chunks", 0))
-                elif stats_response.status_code in (401, 403):
-                    st.warning("管理员登录已失效，请重新登录后查看统计。")
-                else:
-                    st.error("获取统计信息失败")
-            except Exception as e:
-                st.error(f"统计信息获取错误: {str(e)}")
-        else:
-            st.caption("管理员登录后可查看文档统计。")
-
-        # 配额信息显示
-        st.subheader("📊 使用配额")
+        # 3. 使用配额
+        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
         display_quota_info()
 
-        
+        # 4. 高级（BYOK 折叠）
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        render_byok_advanced()
 
-    # 主界面 - 问答系统
-    st.header("🤖 智能问答")
+    # ===== 主区域 =====
+
+    # Hero 区
+    render_hero()
+
+    # 关于折叠卡
+    render_about_expander()
+
     if st.session_state.get("settings_status") == SettingsStatus.RESTORING.value:
         st.info("正在从浏览器恢复设置…")
         st.stop()
 
-    # 聊天界面组件（移出列布局）
+    # 检索范围状态条（如果已锁定到某文档，在主区显著提示）
+    if st.session_state.get("selected_doc_id"):
+        c1, c2 = st.columns([5, 1])
+        with c1:
+            st.markdown(
+                "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;"
+                "padding:8px 12px;font-size:13px;color:#1e40af;'>"
+                "🎯 当前已限定检索范围到指定文档</div>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            if st.button("清除限定", key="clear_scope_main", use_container_width=True):
+                st.session_state.selected_doc_id = None
+                st.rerun()
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    # 聊天界面（welcome 卡片 + 建议问题在内部渲染）
     chat_interface = ChatInterface(BACKEND_URL_INTERNAL, st.session_state.get("admin_jwt"))
     chat_interface.render()
 
-    # 右侧栏 - 文档列表
-    col1, col2 = st.columns([2, 1])
+    # 管理员专属：文档管理面板（折叠在底部）
+    if admin_logged_in:
+        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+        render_admin_doc_management(admin_headers)
 
-    with col1:
-        st.empty()  # 占位符
-
-    with col2:
-        st.header("📋 文档列表")
-
-        # 刷新按钮
-        if st.button("🔄 刷新文档列表"):
-            st.rerun()
-
-        # 获取文档列表
-        if admin_logged_in:
-            try:
-                docs_response = requests.get(
-                    f"{BACKEND_URL_INTERNAL}/api/documents/",
-                    headers=admin_headers,
-                )
-                if docs_response.status_code == 200:
-                    documents = docs_response.json()
-
-                    if documents:
-                        for doc in documents:
-                            with st.expander(f"📄 {doc['filename']}", expanded=False):
-                                st.write(f"**文件类型:** {doc['file_type']}")
-                                st.write(f"**状态:** {doc['status']}")
-                                st.write(f"**块数量:** {doc.get('chunk_count', 'N/A')}")
-                                st.write(f"**上传时间:** {doc['upload_time'][:19]}")
-
-                                # 一键聚焦此文档进行问答（设置检索范围）
-                                if st.button("🎯 基于此文档提问", key=f"focus_{doc['id']}"):
-                                    st.session_state.selected_doc_id = doc['id']
-                                    st.success("已限定检索范围到该文档。回到上方聊天区继续提问。")
-                                    time.sleep(1)
-                                    st.rerun()
-
-                                # 删除按钮
-                                if st.button(f"🗑️ 删除", key=f"delete_{doc['id']}"):
-                                    delete_response = requests.delete(
-                                        f"{BACKEND_URL_INTERNAL}/api/documents/{doc['id']}",
-                                        headers=admin_headers,
-                                    )
-                                    if delete_response.status_code == 200:
-                                        st.success("文档删除成功!")
-                                        time.sleep(1)
-                                        st.rerun()
-                                    elif delete_response.status_code in (401, 403):
-                                        st.error("管理员登录已失效，请重新登录后再删除文档。")
-                                    else:
-                                        st.error("文档删除失败")
-                    else:
-                        st.info("暂无上传的文档")
-                elif docs_response.status_code in (401, 403):
-                    st.warning("管理员登录已失效，请重新登录后查看文档列表。")
-                else:
-                    st.error("获取文档列表失败")
-
-            except Exception as e:
-                st.error(f"文档列表获取错误: {str(e)}")
-        else:
-            st.info("文档列表与删除权限仅管理员可用。")
+    # 页脚
+    render_footer()
 
 
 if __name__ == "__main__":

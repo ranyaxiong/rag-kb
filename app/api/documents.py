@@ -406,6 +406,30 @@ async def list_documents(_: dict = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
 
 
+@router.get("/library")
+async def list_library():
+    """公开的只读知识库目录（用于首页展示，不返回ID等敏感字段）"""
+    try:
+        documents = get_vector_store().list_documents()
+        library = []
+        for doc_info in documents:
+            filename = doc_info.get('filename', '')
+            library.append({
+                "filename": filename,
+                "file_type": os.path.splitext(filename)[1].lstrip('.') or 'file',
+                "chunk_count": doc_info.get('chunk_count', 0),
+            })
+        # 按文件名稳定排序，便于前端展示
+        library.sort(key=lambda x: x['filename'].lower())
+        return {
+            "documents": library,
+            "total": len(library),
+        }
+    except Exception as e:
+        logger.error(f"Error listing library: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list library: {str(e)}")
+
+
 @router.get("/{document_id}")
 async def get_document(document_id: str, _: dict = Depends(require_admin)):
     """获取文档详情"""

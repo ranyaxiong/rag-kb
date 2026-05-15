@@ -5,12 +5,14 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import Request
+
 from jwt import ExpiredSignatureError, InvalidTokenError
 from pydantic import BaseModel
 from pwdlib import PasswordHash
 
 from app.core.config import settings
-
+from app.core.rate_limiter import limiter
 
 
 router = APIRouter()
@@ -49,7 +51,8 @@ def require_admin(token: str = Depends(oauth2_scheme)) -> dict:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(form: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("5/minute")
+async def login(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     try:
         password_hash = settings.get_admin_password_hash()
         secret = settings.get_jwt_secret()
