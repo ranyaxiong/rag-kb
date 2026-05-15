@@ -47,7 +47,7 @@ debugpy>=1.8.0
 keyring==24.3.0
 pwdlib[argon2]==0.2.1
 pyjwt==2.8.0
-slowapi==1.1.0
+slowapi==0.1.9
 
 # Provider SDKs
 dashscope

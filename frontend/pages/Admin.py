@@ -1,6 +1,8 @@
 import os, requests, streamlit as st
 from datetime import datetime, timedelta
 import jwt
+import time
+
 
 #BACKEND = os.getenv("BACKEND_URL", "http://localhost:8000")
 BACKEND = os.getenv("BACKEND_URL")
@@ -121,6 +123,63 @@ def get_quota_stats():
     except Exception as e:
         st.error(f"❌ 请求失败: {str(e)}")
 
+
+def render_admin_doc_management(admin_headers: dict):
+    """管理员专属：文档列表 + 删除/聚焦操作（折叠在主区底部）。"""
+    with st.expander("🗂️ 管理：文档库 / 删除 / 限定检索", expanded=False):
+        col_a, col_b = st.columns([5, 1])
+        with col_b:
+            if st.button("🔄 刷新", key="admin_refresh_docs", use_container_width=True):
+                st.rerun()
+        try:
+            docs_response = requests.get(
+                f"{BACKEND}/api/documents/",
+                headers=admin_headers,
+                timeout=10,
+            )
+            if docs_response.status_code == 200:
+                documents = docs_response.json() or []
+                if not documents:
+                    st.caption("暂无文档")
+                    return
+                for doc in documents:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**📄 {doc['filename']}**  \n"
+                            f"<span style='color:#94a3b8;font-size:12px;'>"
+                            f"{doc.get('file_type','')} · {doc.get('chunk_count','N/A')} 块 · "
+                            f"上传于 {str(doc.get('upload_time',''))[:19]}</span>",
+                            unsafe_allow_html=True,
+                        )
+                        c1, c2 = st.columns([1, 1])
+                        with c1:
+                            if st.button("🎯 限定问答到此文档", key=f"focus_{doc['id']}", use_container_width=True):
+                                st.session_state.selected_doc_id = doc['id']
+                                st.success("已限定到该文档")
+                                time.sleep(0.6)
+                                st.rerun()
+                        with c2:
+                            if st.button("🗑️ 删除", key=f"delete_{doc['id']}", use_container_width=True):
+                                delete_response = requests.delete(
+                                    f"{BACKEND}/api/documents/{doc['id']}",
+                                    headers=admin_headers,
+                                )
+                                if delete_response.status_code == 200:
+                                    st.success("已删除")
+                                    time.sleep(0.6)
+                                    st.rerun()
+                                elif delete_response.status_code in (401, 403):
+                                    st.error("登录已失效，请重新登录")
+                                else:
+                                    st.error("删除失败")
+            elif docs_response.status_code in (401, 403):
+                st.warning("管理员登录已失效")
+            else:
+                st.error("获取文档列表失败")
+        except Exception as e:
+            st.error(f"文档列表获取错误: {str(e)}")
+
+
 def admin_panel():
     """管理员控制面板"""
     st.title("📊 管理员控制台")
@@ -141,7 +200,7 @@ def admin_panel():
     st.markdown("---")
     
     # 功能选项卡
-    tab1, tab2, tab3 = st.tabs(["📊 配额管理", "📈 系统统计", "⚙️ 系统设置"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 配额管理", "📈 系统统计", "⚙️ 系统设置", "📚 文档管理"])
     
     with tab1:
         st.subheader("配额管理")
@@ -206,6 +265,20 @@ def admin_panel():
         - 📝 系统日志查看
         - 🔄 缓存清理
         """)
+
+    with tab4:
+        st.subheader("文档管理")
+        st.info("🚧 文档管理功能开发中...")
+        st.markdown("""
+        **计划功能：**
+        - 📄 查看所有文档
+        - 🗑️ 删除文档
+        - 🔍 聚焦检索
+        """)
+        token = st.session_state.get('admin_jwt')
+        if token:
+            render_admin_doc_management({"Authorization": f"Bearer {token}"})
+
 
 # 主逻辑
 if not st.session_state.get("admin_jwt") or not check_token_validity():

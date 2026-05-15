@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.limiter import limiter
+from app.core.rate_limiter import limiter
 from app.core.config import settings
 from app.core.concurrency import ConcurrencyLimitMiddleware
 from app.api.documents import router as documents_router

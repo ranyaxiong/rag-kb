@@ -730,62 +730,6 @@ def get_admin_auth_headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def render_admin_doc_management(admin_headers: dict):
-    """管理员专属：文档列表 + 删除/聚焦操作（折叠在主区底部）。"""
-    with st.expander("🗂️ 管理：文档库 / 删除 / 限定检索", expanded=False):
-        col_a, col_b = st.columns([5, 1])
-        with col_b:
-            if st.button("🔄 刷新", key="admin_refresh_docs", use_container_width=True):
-                st.rerun()
-        try:
-            docs_response = requests.get(
-                f"{BACKEND_URL_INTERNAL}/api/documents/",
-                headers=admin_headers,
-                timeout=10,
-            )
-            if docs_response.status_code == 200:
-                documents = docs_response.json() or []
-                if not documents:
-                    st.caption("暂无文档")
-                    return
-                for doc in documents:
-                    with st.container(border=True):
-                        st.markdown(
-                            f"**📄 {doc['filename']}**  \n"
-                            f"<span style='color:#94a3b8;font-size:12px;'>"
-                            f"{doc.get('file_type','')} · {doc.get('chunk_count','N/A')} 块 · "
-                            f"上传于 {str(doc.get('upload_time',''))[:19]}</span>",
-                            unsafe_allow_html=True,
-                        )
-                        c1, c2 = st.columns([1, 1])
-                        with c1:
-                            if st.button("🎯 限定问答到此文档", key=f"focus_{doc['id']}", use_container_width=True):
-                                st.session_state.selected_doc_id = doc['id']
-                                st.success("已限定到该文档")
-                                time.sleep(0.6)
-                                st.rerun()
-                        with c2:
-                            if st.button("🗑️ 删除", key=f"delete_{doc['id']}", use_container_width=True):
-                                delete_response = requests.delete(
-                                    f"{BACKEND_URL_INTERNAL}/api/documents/{doc['id']}",
-                                    headers=admin_headers,
-                                )
-                                if delete_response.status_code == 200:
-                                    st.success("已删除")
-                                    time.sleep(0.6)
-                                    st.rerun()
-                                elif delete_response.status_code in (401, 403):
-                                    st.error("登录已失效，请重新登录")
-                                else:
-                                    st.error("删除失败")
-            elif docs_response.status_code in (401, 403):
-                st.warning("管理员登录已失效")
-            else:
-                st.error("获取文档列表失败")
-        except Exception as e:
-            st.error(f"文档列表获取错误: {str(e)}")
-
-
 def render_footer():
     """页脚：版本 / 项目链接。"""
     version = get_git_version_info_frontend()
@@ -930,9 +874,9 @@ def main():
     chat_interface.render()
 
     # 管理员专属：文档管理面板（折叠在底部）
-    if admin_logged_in:
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-        render_admin_doc_management(admin_headers)
+    # if admin_logged_in:
+    #     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+    #     render_admin_doc_management(admin_headers)
 
     # 页脚
     render_footer()
